@@ -80,12 +80,13 @@ is_squeeze = lowerBB > lowerKC and upperBB < upperKC
 fvg_bull = low > high[2]
 fvg_bear = high < low[2]
 
-// Dibujar cajas FVG (Bullish) en tiempo real
-if fvg_bull
+// Dibujar cajas FVG (Bullish) — solo al cierre de vela confirmada
+// FIX BUG: barstate.isconfirmed evita flood de cajas por cada tick de la vela en formación
+if fvg_bull and barstate.isconfirmed
     box.new(bar_index-2, high[2], bar_index, low, border_color=color.new(#00E676, 50), bgcolor=color.new(#00E676, 85), text="🐂 FVG", text_size=size.tiny)
 
-// Dibujar cajas FVG (Bearish) en tiempo real
-if fvg_bear
+// Dibujar cajas FVG (Bearish) — solo al cierre de vela confirmada
+if fvg_bear and barstate.isconfirmed
     box.new(bar_index-2, low[2], bar_index, high, border_color=color.new(#FF5252, 50), bgcolor=color.new(#FF5252, 85), text="🐻 FVG", text_size=size.tiny)
 vol_avg       = ta.sma(volume, 10)
 vol_creciente = volume > vol_avg * 1.0          // FIX: Bajado a 1.0 para aceptar más rebotes en soporte
@@ -244,7 +245,9 @@ if rebote_bajista_cond
 // Avisa horas antes para atenuar asincronía humana
 // ═══════════════════════════════════════════════
 // --- RADAR DE ENTRADA ---
-radar_compra = tendencia_alcista and (math.abs(close - ema50) <= atr * 2.5) and (rsi <= 48 and rsi > 38) and not peligro_reciente and not compra_cond
+// FIX BUG: RSI techo subido de 48 a 54 para cubrir el rango completo de COMPRA NORMAL (40-55)
+// Con 48, el PRE-IN nunca avisaba cuando RSI estaba entre 49-55 y la COMPRA igual disparaba sola
+radar_compra = tendencia_alcista and (math.abs(close - ema50) <= atr * 2.5) and (rsi <= 54 and rsi > 38) and not peligro_reciente and not compra_cond
 radar_dip    = ((close - ta.highest(high, 15)) / ta.highest(high, 15) <= -0.025) and close < ema200 * 1.05 and (rsi <= 45) and not peligro_reciente and not dip_cond and not oportunidad_cond
 
 var int last_radar_in_bar = -999
@@ -298,7 +301,8 @@ if sl_hit or normal_exit
     sl_level := na
 
 // Actualizamos estado (nueva entrada)
-if is_any_entry and not in_trade
+// FIX BUG: agregado `and not sl_hit` para evitar re-entrada automática en la misma barra que se tocó el SL
+if is_any_entry and not in_trade and not sl_hit
     in_trade    := true
     sl_level    := is_entry_4pct ? close * 0.96 : close * 0.97
     entry_price := close
