@@ -1,0 +1,75 @@
+//@version=5
+indicator("🎯 Bóveda Limit Orders V1 [1D/4H]", shorttitle="Bóveda Limit", overlay=true)
+
+// =========================================================================
+// FILOSOFÍA:
+// Este script NO reacciona tarde ni tira alertas molestas intradía.
+// Pre-calcula los niveles exactos donde tenés que poner tus Órdenes Límite 
+// en Binance, ByBit o Kraken para automatizar tu trading asíncrono.
+// =========================================================================
+
+// --- 1. MATEMÁTICA ESTRUCTURAL ---
+ema50  = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+
+daily_ema50  = request.security(syminfo.tickerid, "D", ta.ema(close, 50))
+daily_ema200 = request.security(syminfo.tickerid, "D", ta.ema(close, 200))
+tendencia_alcista = close > ema200 and ema50 > ema200 and (daily_ema50 > daily_ema200)
+
+// Techo local para el Dip
+techo_15 = ta.highest(high, 15)
+
+// --- 2. CÁLCULO ESTÁTICO DE LÍMITES (SOPORTES) ---
+// Límite 1 (Compra en Pullback): Directo a la EMA 50
+// Límite 2 (Compra en Dip): Un -4% exacto desde el techo de 15 barras
+limit_buy_normal = tendencia_alcista ? ema50 : na
+limit_buy_dip    = (techo_15 > 0 and tendencia_alcista) ? techo_15 * 0.96 : na
+
+// --- 3. RENDIMIENTO VISUAL EN PANTALLA ---
+// Ploteamos las zonas para que veas dónde cazar el precio pasivamente
+plot(limit_buy_normal, color=color.new(#2196F3, 30), style=plot.style_linebr, linewidth=2, title="📈 Limit Buy (EMA50)")
+plot(limit_buy_dip,    color=color.new(#FFEB3B, 30), style=plot.style_linebr, linewidth=2, title="🔥 Limit Buy (DIP -4%)")
+
+// --- 4. PANEL DE CONTROL PARA PEGAR EN BINANCE ---
+// Mostrar los datos limpios en la UI
+var table panel = table.new(position.top_right, 3, 4, border_width = 1)
+
+if barstate.islast
+    // Cabeceras
+    table.cell(panel, 0, 0, "ESTRATEGIA", text_color=color.white, bgcolor=color.black)
+    table.cell(panel, 1, 0, "📌 LIMIT BUY", text_color=color.white, bgcolor=color.black)
+    table.cell(panel, 2, 0, "🎯 TAKE PROFIT (+10%) / ❌ STOP LOSS (-4%)", text_color=color.white, bgcolor=color.black)
+    
+    // Fila 1: PULLBACK EMA50
+    table.cell(panel, 0, 1, "PULLBACK NORMAL", text_color=color.white, bgcolor=#2196F3)
+    if not na(limit_buy_normal)
+        table.cell(panel, 1, 1, str.tostring(limit_buy_normal, "#.##"), text_color=color.white, bgcolor=color.gray)
+        table.cell(panel, 2, 1, "TP: " + str.tostring(limit_buy_normal * 1.10, "#.##") + " / SL: " + str.tostring(limit_buy_normal * 0.96, "#.##"), text_color=color.white, bgcolor=color.gray)
+    else
+        table.cell(panel, 1, 1, "INACTIVO (Trend ↓)", text_color=color.red, bgcolor=color.gray)
+        table.cell(panel, 2, 1, "-", text_color=color.white, bgcolor=color.gray)
+
+    // Fila 2: DIP -4%
+    table.cell(panel, 0, 2, "🔥 DIP -4%", text_color=color.black, bgcolor=#FFEB3B)
+    if not na(limit_buy_dip)
+        table.cell(panel, 1, 2, str.tostring(limit_buy_dip, "#.##"), text_color=color.white, bgcolor=color.gray)
+        table.cell(panel, 2, 2, "TP: " + str.tostring(limit_buy_dip * 1.10, "#.##") + " / SL: " + str.tostring(limit_buy_dip * 0.96, "#.##"), text_color=color.white, bgcolor=color.gray)
+    else
+        table.cell(panel, 1, 2, "INACTIVO (Trend ↓)", text_color=color.red, bgcolor=color.gray)
+        table.cell(panel, 2, 2, "-", text_color=color.white, bgcolor=color.gray)
+
+    // Fila 3: PELIGRO ADVERTENCIA
+    peligro_macro = close < ema200
+    table.cell(panel, 0, 3, "ALERTA MACRO", text_color=color.white, bgcolor=color.black)
+    table.cell(panel, 1, 3, peligro_macro ? "❌ BEAR MARKET (No Comprar)" : "✅ BULL MARKET (Soportes Activos)", text_color=peligro_macro ? color.red : color.green, bgcolor=color.black)
+    table.merge_cells(panel, 1, 3, 2, 3)
+
+// =========================================================================
+// INSTRUCCIONES LOGÍSTICAS PARA EL USUARIO:
+// 1. Cargá esto en un gráfico de 4H o Diario (1D).
+// 2. Leé el panel superior derecho 1 sola vez al día (ej: a las 6:00 PM).
+// 3. Copiá el precio de la columna "📌 LIMIT BUY" y poné una orden de COMPRA LÍMITE en Binance.
+// 4. Copiá el precio "TP" como Límite de Venta (Take Profit).
+// 5. Copiá el precio "SL" como Stop Loss.
+// 6. Cerrá la app y dejá que el mercado ejecute las órdenes solo.
+// =========================================================================

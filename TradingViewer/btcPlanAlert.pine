@@ -1,0 +1,502 @@
+//@version=5
+indicator("🚀 Chivo Wallet Alerts V5.6 [4H]", shorttitle="Chivo V5.6", overlay=true, max_labels_count=500)
+
+// ═══════════════════════════════════════════════
+// EMAS
+// ═══════════════════════════════════════════════
+ema50  = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+plot(ema50,  color=#2196F3, title="EMA 50",  linewidth=2)
+plot(ema200, color=#F44336, title="EMA 200", linewidth=2)
+
+// ═══════════════════════════════════════════════
+// INDICADORES BASE
+// ═══════════════════════════════════════════════
+rsi     = ta.rsi(close, 14)
+atr     = ta.atr(14)
+[_, _, adx_val] = ta.dmi(14, 14)
+
+// ═══════════════════════════════════════════════
+// MULTI-TIMEFRAME (Daily & 1H)
+// ═══════════════════════════════════════════════
+// --- Contexto Diario ---
+daily_ema50  = request.security(syminfo.tickerid, "D", ta.ema(close, 50))
+daily_ema200 = request.security(syminfo.tickerid, "D", ta.ema(close, 200))
+daily_rsi    = request.security(syminfo.tickerid, "D", ta.rsi(close, 14))
+daily_bull   = daily_ema50 > daily_ema200
+daily_no_top = daily_rsi < 72
+
+// --- Contexto 1 Hora ---
+h1_ema50     = request.security(syminfo.tickerid, "60", ta.ema(close, 50))
+h1_ema200    = request.security(syminfo.tickerid, "60", ta.ema(close, 200))
+h1_bull      = h1_ema50 > h1_ema200
+
+// --- Divergencias RSI (4H) ---
+// Buscamos divergencias simples en las últimas 40 velas
+pivot_left  = 5
+pivot_right = 2
+low_price   = ta.pivotlow(low, pivot_left, pivot_right)
+low_rsi     = ta.pivotlow(rsi, pivot_left, pivot_right)
+high_price  = ta.pivothigh(high, pivot_left, pivot_right)
+high_rsi    = ta.pivothigh(rsi, pivot_left, pivot_right)
+
+var float last_low_price = na
+var float last_low_rsi   = na
+var float last_high_price = na
+var float last_high_rsi  = na
+
+if not na(low_price)
+    last_low_price := low_price[pivot_right]
+    last_low_rsi   := rsi[pivot_right]
+if not na(high_price)
+    last_high_price := high_price[pivot_right]
+    last_high_rsi   := rsi[pivot_right]
+
+div_bull = low < last_low_price and rsi > last_low_rsi and not na(low_price)
+div_bear = high > last_high_price and rsi < last_high_rsi and not na(high_price)
+
+// ═══════════════════════════════════════════════
+// SQUEEZE MOMENTUM (BB vs KC)
+// ═══════════════════════════════════════════════
+sqz_len  = 20
+sqz_mult = 2.0
+kc_mult  = 1.5
+
+basis = ta.sma(close, sqz_len)
+dev   = sqz_mult * ta.stdev(close, sqz_len)
+upperBB = basis + dev
+lowerBB = basis - dev
+
+ma = ta.sma(close, sqz_len)
+range_ema = ta.ema(ta.tr, sqz_len)
+upperKC = ma + range_ema * kc_mult
+lowerKC = ma - range_ema * kc_mult
+
+is_squeeze = lowerBB > lowerKC and upperBB < upperKC
+
+// ═══════════════════════════════════════════════
+// FAIR VALUE GAPS (FVG) - Detección y Visuales
+// ═══════════════════════════════════════════════
+fvg_bull = low > high[2]
+fvg_bear = high < low[2]
+
+// Dibujar cajas FVG (Bullish) en tiempo real
+if fvg_bull
+    box.new(bar_index-2, high[2], bar_index, low, border_color=color.new(#00E676, 50), bgcolor=color.new(#00E676, 85), text="🐂 FVG", text_size=size.tiny)
+
+// Dibujar cajas FVG (Bearish) en tiempo real
+if fvg_bear
+    box.new(bar_index-2, low[2], bar_index, high, border_color=color.new(#FF5252, 50), bgcolor=color.new(#FF5252, 85), text="🐻 FVG", text_size=size.tiny)
+vol_avg       = ta.sma(volume, 10)
+vol_creciente = volume > vol_avg * 1.0          // FIX: Bajado a 1.0 para aceptar más rebotes en soporte
+
+// Proximidad a EMA50 dinámica con ATR — se adapta a la volatilidad del momento
+precio_cerca_ema50 = math.abs(close - ema50) <= atr * 1.25  // FIX: Rango ampliado a 1.25 para tolerar ruido
+
+vela_alcista = close > open
+vela_roja    = close < open
+
+// Calidad de vela — Aceptamos cuerpo sólido (>40%) o Martillos alcistas (mecha inferior larga)
+body          = math.abs(close - open)
+rango         = high - low
+cuerpo_solido = rango > 0 and (body / rango) >= 0.40
+es_martillo   = rango > 0 and (math.min(open, close) - low) / rango >= 0.50 and vela_alcista
+vela_con_cuerpo = cuerpo_solido or es_martillo // FIX: Incluye martillos (Pin Bars)
+
+// Tendencia con fuerza real — ADX rebajado a 15 para pullbacks donde el momentum descansa
+tendencia_fuerte = adx_val > 15                              // FIX: Básico para no filtrar pullbacks sanos
+
+// ═══════════════════════════════════════════════
+// PELIGRO — definido ANTES de peligro_reciente
+// ═══════════════════════════════════════════════
+rompe_ema50        = ta.crossunder(close, ema50) and close < ema50 * 0.99
+rompe_ema200       = ta.crossunder(close, ema200)            // NUEVO: romper EMA200 = peligro máximo
+rsi_bajo           = rsi < 40
+velas_rojas_fuerza = vela_roja and vela_roja[1] and vol_creciente
+
+// rompe_ema200 vale 2 puntos — es la señal más grave posible
+peligro_count = (rompe_ema50 ? 1 : 0) + (rsi_bajo ? 1 : 0) + (velas_rojas_fuerza ? 1 : 0) + (rompe_ema200 ? 2 : 0)
+
+var int last_peligro_bar = -999
+peligro_cond_base = peligro_count >= 3  // FIX: El doc dice 3+ puntos, tenías 2
+peligro_cond = peligro_cond_base and (bar_index - last_peligro_bar >= 10) // FIX: Cooldown de 10 barras
+if peligro_cond
+    last_peligro_bar := bar_index
+
+peligro_reciente = nz(ta.barssince(peligro_cond[1]), 999) < 5 // FIX: Evita `na` al inicio
+
+// ═══════════════════════════════════════════════
+// 1. 🟢 COMPRA NORMAL
+// ═══════════════════════════════════════════════
+tendencia_alcista = close > ema200 and ema50 > ema200 and daily_bull
+rsi_sano          = rsi >= 40 and rsi <= 55 and rsi > rsi[1]
+compra_cond       = tendencia_alcista and precio_cerca_ema50 and rsi_sano and vela_alcista and vela_con_cuerpo and vol_creciente and tendencia_fuerte and daily_no_top
+
+plotshape(compra_cond, title="🟢 COMPRA", location=location.belowbar, color=color.new(#00E676, 0), style=shape.triangleup, size=size.large, text="🟢 COMPRA", textcolor=color.white)
+if compra_cond
+    alert("🟢 COMPRA NORMAL | Precio: $" + str.tostring(close, "#.##") + " | SL: $" + str.tostring(close * 0.96, "#.##") + " (-4%) | TP: $" + str.tostring(close * 1.10, "#.##") + " (+10%) | RSI: " + str.tostring(rsi, "#.#") + " | Entrada 40-50%", alert.freq_once_per_bar_close)
+
+// (Stop loss visual dinámico movido al final del script)
+// ═══════════════════════════════════════════════
+// 2. 🟢 DIP EN CORRECCIÓN
+// ═══════════════════════════════════════════════
+dip_fuerte      = (close - ta.highest(high, 15)) / ta.highest(high, 15) <= -0.04 and close < ema200 * 1.02 // FIX: Caída desde techo reciente
+rsi_bajo_rebote = rsi <= 42 and rsi > rsi[1] and rsi[1] > rsi[2]  // FIX: 2 barras *consecutivas* subiendo
+dip_cond        = dip_fuerte and rsi_bajo_rebote and vol_creciente and vela_alcista and vela_con_cuerpo and not peligro_reciente  // MEJORA: añadido filtro peligro + vela_con_cuerpo
+
+plotshape(dip_cond, title="🟢 DIP EN CORRECCIÓN", location=location.belowbar, color=color.new(#00C853, 0), style=shape.triangleup, size=size.large, text="🟢 DIP!", textcolor=color.white)
+if dip_cond
+    alert("🟢 DIP EN CORRECCIÓN | Precio: $" + str.tostring(close, "#.##") + " | SL: $" + str.tostring(close * 0.96, "#.##") + " (-4%) | TP: $" + str.tostring(close * 1.10, "#.##") + " (+10%) | RSI: " + str.tostring(rsi, "#.#") + " | Entrada 50-60%", alert.freq_once_per_bar_close)
+
+// ═══════════════════════════════════════════════
+// 3. 🔥 DIP BRUTAL (normal — sin peligro reciente)
+// ═══════════════════════════════════════════════
+oportunidad_cond = dip_fuerte and rsi <= 38 and daily_bull and vol_creciente and vela_con_cuerpo and vela_alcista and not peligro_reciente and close > ema200 * 0.98 and daily_no_top // FIX: Faltaba vela_alcista
+
+plotshape(oportunidad_cond, title="🔥 DIP BRUTAL", location=location.belowbar, color=color.new(#FFEB3B, 0), style=shape.diamond, size=size.large, text="🔥 DIP BRUTAL!", textcolor=color.black)
+if oportunidad_cond
+    alert("🔥 DIP BRUTAL | Precio: $" + str.tostring(close, "#.##") + " | SL: $" + str.tostring(close * 0.96, "#.##") + " (-4%) | TP: $" + str.tostring(close * 1.12, "#.##") + " (+12%) | RSI: " + str.tostring(rsi, "#.#") + " | Entrada 60-70%", alert.freq_once_per_bar_close)
+
+// ═══════════════════════════════════════════════
+// 3B. 🔥💀 DIP POST-CAPITULACIÓN (NUEVO V5.3)
+// PELIGRO ocurrió 1-4 barras atrás = flush final
+// Condiciones MÁS estrictas para re-entrar
+// ═══════════════════════════════════════════════
+
+// Cuántas barras pasaron desde el último PELIGRO
+barras_desde_peligro = ta.barssince(peligro_cond[1])
+
+// Confirmación fuerte de reversión post-capitulación
+es_post_capitulacion  = barras_desde_peligro >= 1 and barras_desde_peligro <= 4
+
+// RSI más exigente — tiene que subir 3 barras seguidas desde sobreventa extrema
+rsi_rebote_fuerte = rsi <= 36 and rsi > rsi[1] and rsi[1] > rsi[2] and rsi[2] > rsi[3] // FIX: Escalera alcista real
+
+// Vela muy alcista — cuerpo ≥ 55% del rango (no alcanza cualquier verde)
+vela_fuerte = rango > 0 and (body / rango) >= 0.55
+
+// Volumen muy por encima del promedio — el mercado está comprando en serio
+vol_capitulacion = volume > vol_avg * 1.6
+
+// Precio no se hundió más allá del 96% de EMA200 (si cayó más, es cambio de tendencia)
+precio_piso_ok = close > ema200 * 0.96
+
+// Tendencia diaria todavía respira — EMA50D no colapsó lejos de EMA200D
+daily_no_colapso = daily_ema50 > daily_ema200 * 0.97
+
+post_capitulacion_cond = es_post_capitulacion and rsi_rebote_fuerte and vela_fuerte and vol_capitulacion and precio_piso_ok and daily_no_colapso and vela_alcista
+
+plotshape(post_capitulacion_cond, title="🔥💀 POST-CAPITULACIÓN", location=location.belowbar, color=color.new(#FF6F00, 0), style=shape.diamond, size=size.large, text="🔥 RE-ENTRADA!", textcolor=color.white)
+if post_capitulacion_cond
+    alert("🔥💀 POST-CAPITULACIÓN | Precio: $" + str.tostring(close, "#.##") + " | SL: $" + str.tostring(close * 0.97, "#.##") + " (-3%) | TP: $" + str.tostring(close * 1.10, "#.##") + " (+10%) | RSI: " + str.tostring(rsi, "#.#") + " | Re-entrada 40-50%", alert.freq_once_per_bar_close)
+
+// ═══════════════════════════════════════════════
+// 4. 🔴 VENTA
+// ═══════════════════════════════════════════════
+rsi_sobrecompra = ta.crossover(rsi, 72)
+reversion_clara = ta.crossunder(close, ema50) and vela_roja and rsi < 62 and vol_creciente  // MEJORA: requiere volumen
+
+var int last_venta_bar = -999
+venta_cond_base = rsi_sobrecompra or reversion_clara
+venta_cond      = venta_cond_base and (bar_index - last_venta_bar >= 8) // FIX: Cooldown de 8 barras
+if venta_cond
+    last_venta_bar := bar_index
+
+plotshape(venta_cond, title="🔴 VENTA", location=location.abovebar, color=color.new(#F44336, 0), style=shape.triangledown, size=size.large, text="🔴 VENTA", textcolor=color.white)
+if venta_cond
+    alert("🔴 VENTA | Precio: $" + str.tostring(close, "#.##") + " | RSI: " + str.tostring(rsi, "#.#") + " | Evaluar salida parcial o total", alert.freq_once_per_bar_close)
+
+// ═══════════════════════════════════════════════
+// 5. 🟡 PELIGRO
+// ═══════════════════════════════════════════════
+plotshape(peligro_cond, title="🟡 PELIGRO", location=location.abovebar, color=color.new(#FF9800, 0), style=shape.triangledown, size=size.normal, text="🟡 PELIGRO", textcolor=color.white)
+if peligro_cond
+    alert("🟡 PELIGRO | Precio: $" + str.tostring(close, "#.##") + " | RSI: " + str.tostring(rsi, "#.#") + " | Salir YA si estás dentro", alert.freq_once_per_bar_close)
+
+// ═══════════════════════════════════════════════
+// 6. 💀 PELIGRO EXTREMO (NUEVO en V5.1)
+// ═══════════════════════════════════════════════
+var int last_extremo_bar = -999
+peligro_extremo_base = rompe_ema200 and vol_creciente
+peligro_extremo = peligro_extremo_base and (bar_index - last_extremo_bar >= 15) // FIX: Cooldown de 15 barras
+if peligro_extremo
+    last_extremo_bar := bar_index
+
+plotshape(peligro_extremo, title="💀 PELIGRO EXTREMO", location=location.abovebar, color=color.new(#B71C1C, 0), style=shape.xcross, size=size.large, text="💀 SALIR", textcolor=color.white)
+if peligro_extremo
+    alert("💀 PELIGRO EXTREMO | Precio: $" + str.tostring(close, "#.##") + " | Rompe EMA200 con volumen | SALIR 100% INMEDIATAMENTE", alert.freq_once_per_bar_close)
+
+// ═══════════════════════════════════════════════
+// 7. ⚡ REBOTE BAJISTA (NUEVO V5.2)
+// Opera rebotes cortos incluso en tendencia bajista
+// Entrada pequeña 20-30% máximo – salida rápida
+// ═══════════════════════════════════════════════
+caida_fuerte_bajista = (close - close[5]) / close[5] <= -0.06
+rsi_rebote_bajista   = rsi <= 35 and rsi > rsi[1] and rsi[1] > rsi[2] // FIX: Escalera alcista
+rebote_bajista_cond  = caida_fuerte_bajista and rsi_rebote_bajista and vol_creciente and vela_alcista and vela_con_cuerpo and not peligro_reciente and not daily_bull
+
+plotshape(rebote_bajista_cond, title="⚡ REBOTE BAJISTA", location=location.belowbar, color=color.new(#00BCD4, 0), style=shape.triangleup, size=size.normal, text="⚡ REBOTE", textcolor=color.white)
+if rebote_bajista_cond
+    alert("⚡ REBOTE BAJISTA | Precio: $" + str.tostring(close, "#.##") + " | SL: $" + str.tostring(close * 0.97, "#.##") + " (-3%) | TP: $" + str.tostring(close * 1.06, "#.##") + " (+6%) | RSI: " + str.tostring(rsi, "#.#") + " | Entrada 20-30%", alert.freq_once_per_bar_close)
+
+// ═══════════════════════════════════════════════
+// 8. 📡 RADARES PREVENTIVOS PRE-ALERTAS (V5.6)
+// Avisa horas antes para atenuar asincronía humana
+// ═══════════════════════════════════════════════
+// --- RADAR DE ENTRADA ---
+radar_compra = tendencia_alcista and (math.abs(close - ema50) <= atr * 2.5) and (rsi <= 48 and rsi > 38) and not peligro_reciente and not compra_cond
+radar_dip    = ((close - ta.highest(high, 15)) / ta.highest(high, 15) <= -0.025) and close < ema200 * 1.05 and (rsi <= 45) and not peligro_reciente and not dip_cond and not oportunidad_cond
+
+var int last_radar_in_bar = -999
+radar_in_raw = radar_compra or radar_dip
+radar_in_activo = radar_in_raw and (bar_index - last_radar_in_bar >= 10) // Anti-spam de 10 barras
+if radar_in_activo
+    last_radar_in_bar := bar_index
+
+plotshape(radar_in_activo, title="📡 RADAR ENTRADA", location=location.belowbar, color=color.new(#FF9800, 0), style=shape.flag, size=size.small, text="📡\nPRE-IN", textcolor=color.black)
+if radar_in_activo
+    alert("📡 RADAR ENTRADA | Precio: $" + str.tostring(close, "#.##") + " | Entrando en Zona Caliente, ¡preparate para actuar!", alert.freq_once_per_bar_close)
+
+// --- RADAR DE SALIDA (Take Profit / Peligro) ---
+radar_tp      = (rsi >= 68 and rsi < 72) and close > ema50 // Acercándose a sobrecompra para tomar ganancias
+radar_peligro = (close > ema50 and (close - ema50) <= atr * 1.0) and vela_roja // Amenaza de cruzar la EMA50 para abajo
+
+var int last_radar_out_bar = -999
+radar_out_raw = radar_tp or radar_peligro
+radar_out_activo = radar_out_raw and (bar_index - last_radar_out_bar >= 8) // Anti-spam de 8 barras
+if radar_out_activo
+    last_radar_out_bar := bar_index
+
+plotshape(radar_out_activo, title="⚠️ RADAR SALIDA", location=location.abovebar, color=color.new(#FFC107, 0), style=shape.flag, size=size.small, text="⚠️\nPRE-OUT", textcolor=color.black)
+if radar_out_activo
+    alert("⚠️ RADAR SALIDA | Precio: $" + str.tostring(close, "#.##") + " | Acercándose a TP o Peligro. Asegurá liquidez.", alert.freq_once_per_bar_close)
+
+// ═══════════════════════════════════════════════
+// 9. 🛡️ GESTIÓN DE RIESGO: TRACKING DE STOP LOSS MANUAL
+// Como Chivo Wallet no tiene Stop Limit, el script
+// dibuja la línea de stop y te grita cuando la cruzás.
+// ═══════════════════════════════════════════════
+
+var float sl_level    = na
+var float entry_price = na
+var bool  in_trade    = false
+
+is_entry_4pct = compra_cond or dip_cond or oportunidad_cond
+is_entry_3pct = post_capitulacion_cond or rebote_bajista_cond
+is_any_entry  = is_entry_4pct or is_entry_3pct
+
+// Detectamos si el precio perforó el Stop Loss en base al 'low' de la vela
+sl_hit = false
+if in_trade and (low <= sl_level)
+    sl_hit := true
+
+normal_exit = in_trade and (venta_cond or peligro_cond or peligro_extremo)
+
+// Actualizamos estado (reseteo al salir)
+if sl_hit or normal_exit
+    in_trade := false
+    sl_level := na
+
+// Actualizamos estado (nueva entrada)
+if is_any_entry and not in_trade
+    in_trade    := true
+    sl_level    := is_entry_4pct ? close * 0.96 : close * 0.97
+    entry_price := close
+
+// Reset entry_price al cerrar
+if sl_hit or normal_exit
+    entry_price := na
+
+// Ploteando la línea persistente del Stop Loss mientras la operación está viva
+plot(in_trade ? sl_level : na, title="🛡️ Stop Loss Activo", color=color.new(#FF5252, 10), style=plot.style_linebr, linewidth=3)
+
+// Ploteando la alerta en el momento exacto que la vela toca el Stop Loss
+plotshape(sl_hit, title="❌ CORTE PÉRDIDA", location=location.belowbar, color=color.new(#D50000, 0), style=shape.xcross, size=size.normal, text="❌ SALIR YA\n(STOP HIT)", textcolor=color.white)
+if sl_hit
+    alert("❌ STOP LOSS HIT | Precio: $" + str.tostring(close, "#.##") + " | Perforó nivel de SL. Cerrá posición y asumí la pérdida.", alert.freq_once_per_bar_close)
+
+// ═══════════════════════════════════════════════
+// 10. 🚀 BREAKOUT CAMBIO DE TENDENCIA (NUEVO V5.6)
+// Detecta reversiones de Bear a Bull con confirmación múltiple.
+// AISLADO de la lógica de PELIGRO — no interfieren entre sí.
+// Entrada REDUCIDA: 20-30% máximo. Alto riesgo = alta recompensa.
+// ═══════════════════════════════════════════════
+
+// --- FILTRO 1: El precio lleva 3 velas consecutivas por arriba de la EMA200 ---
+// No alcanza con una vela verde gigante, necesita impulso sostenido
+above_ema200_3bars = close > ema200 and close[1] > ema200 and close[2] > ema200
+
+// --- FILTRO 2: La vela de ruptura tuvo volumen institucional real ---
+// Bajado a 1.5x para capturar también lateralizaciones con menor volumen
+vol_ruptura = ta.highest(volume, 3) > vol_avg * 1.5
+
+// --- FILTRO 3: RSI confirmó el giro - salió de neutral subiendo con fuerza ---
+// Ampliado a 48-68 para capturar lateralizaciones y compresiones de volatilidad
+rsi_giro = rsi > 48 and rsi < 68 and rsi > rsi[1] and rsi[1] > rsi[2]
+
+// --- FILTRO 4: ZONA de Golden Cross (±5% de las EMAs) ---
+// Antes: solo antes del cruce. Ahora: captura ANTES y DESPUéS del cruce (lateralización)
+// Si las EMAs están dentro del 5% entre sí = zona de transición activa
+golden_cross_zone = math.abs(ema50 - ema200) / ema200 <= 0.05
+
+// --- FILTRO 5: Confirmación en Diario también despertando ---
+daily_recovery = daily_ema50 > daily_ema200 * 0.96 // EMA50D acercyándose a EMA200D desde abajo
+
+// --- VELA DE CALIDAD en la ruptura ---
+vela_ruptura_fuerte = vela_alcista and rango > 0 and (body / rango) >= 0.55
+
+// --- CONDICIÓN FINAL BREAKOUT ---
+// Necesita TODOS los filtros. Es la señal más exigente del sistema.
+var int last_breakout_bar = -999
+breakout_cond_base = above_ema200_3bars and vol_ruptura and rsi_giro and golden_cross_zone and daily_recovery and vela_ruptura_fuerte
+breakout_cond = breakout_cond_base and (bar_index - last_breakout_bar >= 20) // Cooldown de 20 barras (80 horas)
+if breakout_cond
+    last_breakout_bar := bar_index
+
+plotshape(breakout_cond, title="🚀 BREAKOUT TENDENCIA", location=location.belowbar, color=color.new(#7C4DFF, 0), style=shape.triangleup, size=size.large, text="🚀 BREAKOUT!", textcolor=color.white)
+alertcondition(breakout_cond, title="🚀 Alerta BREAKOUT TENDENCIA", message="POSIBLE CAMBIO DE TENDENCIA: BTC confirma 3 velas sobre EMA200 + volumen institucional + RSI girando + Golden Cross inminente. ENTRADA REDUCIDA 20-30% máximo. Verificá el contexto diario antes de actuar.")
+
+// ═══════════════════════════════════════════════
+// 11. 📊 DASHBOARD — ESTADO EN TIEMPO REAL
+// Panel visual en TradingView con toda la info
+// crítica que necesitás para decidir en segundos.
+// ═══════════════════════════════════════════════
+
+var table dash = table.new(position.middle_left, 3, 10,
+     border_color=color.new(color.gray, 50),
+     border_width=1,
+     frame_color=color.new(color.gray, 30),
+     frame_width=1)
+
+var table context_dash = table.new(position.bottom_right, 2, 8,
+     border_color=color.new(color.gray, 50),
+     border_width=1,
+     frame_color=color.new(color.gray, 30),
+     frame_width=1)
+
+if barstate.islast
+
+    // --- Helpers ---
+    pnl_pct      = not na(entry_price) and entry_price > 0 ? (close - entry_price) / entry_price * 100 : 0.0
+    pnl_color    = pnl_pct >= 0 ? color.new(#00E676, 0) : color.new(#FF5252, 0)
+    trend_color  = daily_bull ? color.new(#00E676, 0) : color.new(#FF5252, 0)
+    trend_label  = daily_bull ? "🟢 BULL" : "🔴 BEAR"
+    trade_color  = in_trade   ? color.new(#00E676, 20) : color.new(color.gray, 60)
+    rsi_color    = rsi > 70 ? color.new(#FF5252,0) : rsi < 40 ? color.new(#00E676,0) : color.new(color.orange,0)
+    
+    // Helpers para Tabla de Contexto
+    dist_ema200  = (close - ema200) / ema200 * 100
+    vol_ratio    = volume / vol_avg
+    h1_color     = h1_bull ? color.new(#00E676, 0) : color.new(#FF5252, 0)
+    dist_color   = math.abs(dist_ema200) > 5 ? color.new(color.orange, 0) : color.new(color.gray, 40)
+    div_label    = div_bull ? "🐮 BULL DIV" : div_bear ? "🐻 BEAR DIV" : "—"
+    div_color    = div_bull ? color.new(#00E676, 0) : div_bear ? color.new(#FF5252, 0) : color.new(#0D0D1A, 0)
+
+    // Lógica de Autorecomendación
+    rec_label = "👀 OBSERVANDO"
+    rec_color = color.new(color.gray, 40)
+    sqz_tag   = is_squeeze ? " [SQZ]" : ""
+    
+    if tendencia_alcista and div_bull and vol_ratio > 1.2
+        rec_label := "🚀 POSIBLE COMPRA" + sqz_tag
+        rec_color := color.new(#00E676, 0)
+    else if not tendencia_alcista and div_bear and vol_ratio > 1.2
+        rec_label := "💀 POSIBLE VENTA" + sqz_tag
+        rec_color := color.new(#FF5252, 0)
+    else if math.abs(dist_ema200) > 8
+        rec_label := "⚠️ MUY ESTIRADO" + sqz_tag
+        rec_color := color.new(color.orange, 0)
+    else if is_squeeze
+        rec_label := "🤐 SQUEEZE ACTIVO"
+        rec_color := color.new(#7C4DFF, 0)
+    else if vol_ratio < 0.6
+        rec_label := "💤 SIN INTERÉS"
+        rec_color := color.new(color.gray, 40)
+
+    // --- Fila 0: ENCABEZADO ---
+    table.cell(dash, 0, 0, "📊 CHIVO V5.6", text_color=color.white, bgcolor=color.new(#1A237E,0), text_size=size.small)
+    table.cell(dash, 1, 0, str.tostring(close, "#.##") + " USD",  text_color=color.white, bgcolor=color.new(#1A237E,0), text_size=size.small)
+    table.cell(dash, 2, 0, "META / IDEAL", text_color=color.white, bgcolor=color.new(#1A237E,0), text_size=size.small)
+
+    // --- Fila 1: TENDENCIA ---
+    table.cell(dash, 0, 1, "TENDENCIA",   text_color=color.new(color.gray,0), bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+    table.cell(dash, 1, 1, trend_label,   text_color=color.white, bgcolor=trend_color,  text_size=size.small)
+    table.cell(dash, 2, 1, "🟢 BULL",    text_color=color.gray, bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+
+    // --- Fila 2: RSI ---
+    table.cell(dash, 0, 2, "RSI 14",      text_color=color.new(color.gray,0), bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+    table.cell(dash, 1, 2, str.tostring(rsi, "#.#"), text_color=color.white, bgcolor=rsi_color, text_size=size.small)
+    table.cell(dash, 2, 2, "40 - 55",     text_color=color.gray, bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+
+    // --- Fila 3: ADX ---
+    adx_label = adx_val > 25 ? "FUERTE (" + str.tostring(adx_val,"#.#") + ")" : "DÉBIL (" + str.tostring(adx_val,"#.#") + ")"
+    adx_color = adx_val > 25 ? color.new(#00C853,0) : color.new(color.gray,40)
+    table.cell(dash, 0, 3, "ADX",         text_color=color.new(color.gray,0), bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+    table.cell(dash, 1, 3, adx_label,     text_color=color.white, bgcolor=adx_color, text_size=size.small)
+    table.cell(dash, 2, 3, "> 25",        text_color=color.gray, bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+
+    // --- Fila 4: POSICIÓN ACTIVA ---
+    table.cell(dash, 0, 4, "POSICIÓN",    text_color=color.new(color.gray,0), bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+    table.cell(dash, 1, 4, in_trade ? "🔵 ABIERTA" : "⚪ LIBRE", text_color=color.white, bgcolor=trade_color, text_size=size.small)
+    table.cell(dash, 2, 4, "⚪ LIBRE",    text_color=color.gray, bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+
+    // --- Fila 5: PRECIO ENTRADA ---
+    table.cell(dash, 0, 5, "ENTRADA",     text_color=color.new(color.gray,0), bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+    table.cell(dash, 1, 5, not na(entry_price) ? str.tostring(entry_price, "#.##") : "—", text_color=color.white, bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+    table.cell(dash, 2, 5, "—",           text_color=color.gray, bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+
+    // --- Fila 6: STOP LOSS ---
+    table.cell(dash, 0, 6, "STOP LOSS",   text_color=color.new(color.gray,0), bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+    table.cell(dash, 1, 6, not na(sl_level) ? str.tostring(sl_level, "#.##") : "—", text_color=color.new(#FF5252,0), bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+    table.cell(dash, 2, 6, "—",           text_color=color.gray, bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+
+    // --- Fila 7: P&L ---
+    table.cell(dash, 0, 7, "P&L",         text_color=color.new(color.gray,0), bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+    table.cell(dash, 1, 7, in_trade ? str.tostring(pnl_pct, "#.##") + "%" : "—", text_color=color.white, bgcolor=in_trade ? pnl_color : color.new(#0D0D1A,0), text_size=size.small)
+    table.cell(dash, 2, 7, "TP > 10%",    text_color=color.gray, bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+
+    // --- Fila 8: PELIGRO RECIENTE ---
+    table.cell(dash, 0, 8, "PELIGRO",     text_color=color.new(color.gray,0), bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+    table.cell(dash, 1, 8, peligro_reciente ? "⚠️ ACTIVO (no entrar)" : "✅ Despejado", text_color=color.white, bgcolor=peligro_reciente ? color.new(#FF6F00,0) : color.new(#1B5E20,0), text_size=size.small)
+    table.cell(dash, 2, 8, "Despejado",  text_color=color.gray, bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+
+    // --- Fila 9: AUTO-RECOMENDACIÓN ---
+    table.cell(dash, 0, 9, "ACCIÓN",      text_color=color.white, bgcolor=color.new(color.black,0), text_size=size.small)
+    table.cell(dash, 1, 9, rec_label,     text_color=color.white, bgcolor=rec_color, text_size=size.small)
+    table.cell(dash, 2, 9, "Checklist OK", text_color=color.gray, bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+
+    // --- TABLA DE CONTEXTO ---
+    table.cell(context_dash, 0, 0, "🌍 CONTEXTO MACRO", text_color=color.white, bgcolor=color.new(color.black, 0), text_size=size.small)
+    table.cell(context_dash, 1, 0, "ESTADO", text_color=color.white, bgcolor=color.new(color.black, 0), text_size=size.small)
+    
+    // Fila 1: 1H Trend
+    table.cell(context_dash, 0, 1, "TENDENCIA 1H", text_color=color.gray, bgcolor=color.new(#0D0D1A, 0), text_size=size.small)
+    table.cell(context_dash, 1, 1, h1_bull ? "🟢 BULL" : "🔴 BEAR", text_color=color.white, bgcolor=h1_color, text_size=size.small)
+    
+    // Fila 2: Distancia EMA200
+    table.cell(context_dash, 0, 2, "EXTENSIÓN (%)", text_color=color.gray, bgcolor=color.new(#0D0D1A, 0), text_size=size.small)
+    table.cell(context_dash, 1, 2, str.tostring(dist_ema200, "#.##") + "%", text_color=color.white, bgcolor=dist_color, text_size=size.small)
+    
+    // Fila 3: Vol-Ratio
+    table.cell(context_dash, 0, 3, "VOL-RATIO", text_color=color.gray, bgcolor=color.new(#0D0D1A, 0), text_size=size.small)
+    table.cell(context_dash, 1, 3, str.tostring(vol_ratio, "#.##") + "x", text_color=color.white, bgcolor=vol_ratio > 1.5 ? color.new(#7C4DFF, 0) : color.new(#0D0D1A, 0), text_size=size.small)
+    
+    // Fila 4: Divergencias
+    table.cell(context_dash, 0, 4, "DIVERGENCIA", text_color=color.gray, bgcolor=color.new(#0D0D1A, 0), text_size=size.small)
+    table.cell(context_dash, 1, 4, div_label, text_color=color.white, bgcolor=div_color, text_size=size.small)
+
+    // Fila 5: AUTO-RECOMENDACIÓN
+    table.cell(context_dash, 0, 5, "ACCIÓN", text_color=color.white, bgcolor=color.new(color.black, 0), text_size=size.small)
+    table.cell(context_dash, 1, 5, rec_label, text_color=color.white, bgcolor=rec_color, text_size=size.small)
+
+    // Fila 6: SQUEEZE (NUEVO)
+    table.cell(context_dash, 0, 6, "SQUEEZE", text_color=color.gray, bgcolor=color.new(#0D0D1A, 0), text_size=size.small)
+    table.cell(context_dash, 1, 6, is_squeeze ? "🤐 COMPRESIÓN" : "⚪ INACTIVO", text_color=color.white, bgcolor=is_squeeze ? color.new(#7C4DFF, 0) : color.new(#0D0D1A, 0), text_size=size.small)
+
+    // Fila 7: FVG (NUEVO)
+    fvg_status = fvg_bull ? "🐂 BULL GAP" : fvg_bear ? "🐻 BEAR GAP" : "—"
+    fvg_bg     = fvg_bull ? color.new(#1B5E20, 0) : fvg_bear ? color.new(#B71C1C, 0) : color.new(#0D0D1A, 0)
+    table.cell(context_dash, 0, 7, "FVG RECIENTE", text_color=color.gray, bgcolor=color.new(#0D0D1A, 0), text_size=size.small)
+    table.cell(context_dash, 1, 7, fvg_status, text_color=color.white, bgcolor=fvg_bg, text_size=size.small)
+
+

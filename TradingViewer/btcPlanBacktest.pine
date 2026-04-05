@@ -1,0 +1,195 @@
+//@version=5
+strategy("📊 Backtest Chivo V5.6", shorttitle="Backtest V5.6", overlay=true, initial_capital=10000, commission_type=strategy.commission.percent, commission_value=0.5, currency=currency.USD)
+
+// ═══════════════════════════════════════════════
+// EMAS
+// ═══════════════════════════════════════════════
+ema50  = ta.ema(close, 50)
+ema200 = ta.ema(close, 200)
+plot(ema50,  color=#2196F3, title="EMA 50",  linewidth=2)
+plot(ema200, color=#F44336, title="EMA 200", linewidth=2)
+
+// ═══════════════════════════════════════════════
+// INDICADORES BASE
+// ═══════════════════════════════════════════════
+rsi     = ta.rsi(close, 14)
+atr     = ta.atr(14)
+[_, _, adx_val] = ta.dmi(14, 14)
+
+// ═══════════════════════════════════════════════
+// MULTI-TIMEFRAME (Daily)
+// ═══════════════════════════════════════════════
+daily_ema50  = request.security(syminfo.tickerid, "D", ta.ema(close, 50))
+daily_ema200 = request.security(syminfo.tickerid, "D", ta.ema(close, 200))
+daily_rsi    = request.security(syminfo.tickerid, "D", ta.rsi(close, 14))
+daily_bull   = daily_ema50 > daily_ema200
+daily_no_top = daily_rsi < 72
+
+// ═══════════════════════════════════════════════
+// FILTROS
+// ═══════════════════════════════════════════════
+vol_avg       = ta.sma(volume, 10)
+vol_creciente = volume > vol_avg * 1.0
+
+precio_cerca_ema50 = math.abs(close - ema50) <= atr * 1.25
+
+vela_alcista = close > open
+vela_roja    = close < open
+
+body          = math.abs(close - open)
+rango         = high - low
+cuerpo_solido = rango > 0 and (body / rango) >= 0.40
+es_martillo   = rango > 0 and (math.min(open, close) - low) / rango >= 0.50 and vela_alcista
+vela_con_cuerpo = cuerpo_solido or es_martillo
+
+tendencia_fuerte = adx_val > 15
+
+// ═══════════════════════════════════════════════
+// PELIGRO
+// ═══════════════════════════════════════════════
+rompe_ema50        = ta.crossunder(close, ema50) and close < ema50 * 0.99
+rompe_ema200       = ta.crossunder(close, ema200)
+rsi_bajo           = rsi < 40
+velas_rojas_fuerza = vela_roja and vela_roja[1] and vol_creciente
+
+peligro_count = (rompe_ema50 ? 1 : 0) + (rsi_bajo ? 1 : 0) + (velas_rojas_fuerza ? 1 : 0) + (rompe_ema200 ? 2 : 0)
+
+var int last_peligro_bar = -999
+peligro_cond_base = peligro_count >= 3
+peligro_cond = peligro_cond_base and (bar_index - last_peligro_bar >= 10)
+if peligro_cond
+    last_peligro_bar := bar_index
+
+peligro_reciente = nz(ta.barssince(peligro_cond[1]), 999) < 5
+
+// ═══════════════════════════════════════════════
+// CONDICIONES DE ENTRADA
+// ═══════════════════════════════════════════════
+// 1. COMPRA NORMAL (45%)
+tendencia_alcista = close > ema200 and ema50 > ema200 and daily_bull
+rsi_sano          = rsi >= 40 and rsi <= 55 and rsi > rsi[1]
+compra_cond       = tendencia_alcista and precio_cerca_ema50 and rsi_sano and vela_alcista and vela_con_cuerpo and vol_creciente and tendencia_fuerte and daily_no_top
+
+// 2. DIP EN CORRECCIÓN (55%)
+dip_fuerte      = (close - ta.highest(high, 15)) / ta.highest(high, 15) <= -0.04 and close < ema200 * 1.02
+rsi_bajo_rebote = rsi <= 42 and rsi > rsi[1] and rsi[1] > rsi[2]
+dip_cond        = dip_fuerte and rsi_bajo_rebote and vol_creciente and vela_alcista and vela_con_cuerpo and not peligro_reciente
+
+// 3. DIP BRUTAL (65%)
+oportunidad_cond = dip_fuerte and rsi[1] <= 38 and rsi > rsi[1] and daily_bull and vol_creciente and vela_con_cuerpo and vela_alcista and not peligro_reciente and close > ema200 * 0.98 and daily_no_top
+
+// 3B. POST-CAPITULACIÓN (45%)
+barras_desde_peligro = ta.barssince(peligro_cond[1])
+es_post_capitulacion  = barras_desde_peligro >= 1 and barras_desde_peligro <= 6
+rsi_rebote_fuerte = rsi[1] <= 36 and rsi > rsi[1] and rsi[1] > rsi[2]
+vela_fuerte = rango > 0 and (body / rango) >= 0.55
+vol_capitulacion = volume > vol_avg * 1.6
+precio_piso_ok = close > ema200 * 0.96
+daily_no_colapso = daily_ema50 > daily_ema200 * 0.97
+post_capitulacion_cond = es_post_capitulacion and rsi_rebote_fuerte and vela_fuerte and vol_capitulacion and precio_piso_ok and daily_no_colapso and vela_alcista
+
+// 7. REBOTE BAJISTA (25%)
+caida_fuerte_bajista = (close - close[5]) / close[5] <= -0.06
+rsi_rebote_bajista   = rsi <= 35 and rsi > rsi[1] and rsi[1] > rsi[2]
+rebote_bajista_cond  = caida_fuerte_bajista and rsi_rebote_bajista and vol_creciente and vela_alcista and vela_con_cuerpo and not peligro_reciente and not daily_bull
+
+// 10. BREAKOUT TENDENCIA (25%)
+above_ema200_3bars = close > ema200 and close[1] > ema200 and close[2] > ema200
+vol_ruptura = ta.highest(volume, 3) > vol_avg * 1.5
+rsi_giro = rsi > 48 and rsi < 68 and rsi > rsi[1] and rsi[1] > rsi[2]
+golden_cross_zone = math.abs(ema50 - ema200) / ema200 <= 0.05
+daily_recovery = daily_ema50 > daily_ema200 * 0.96
+vela_ruptura_fuerte = vela_alcista and rango > 0 and (body / rango) >= 0.55
+
+var int last_breakout_bar = -999
+breakout_cond_base = above_ema200_3bars and vol_ruptura and rsi_giro and golden_cross_zone and daily_recovery and vela_ruptura_fuerte
+breakout_cond = breakout_cond_base and (bar_index - last_breakout_bar >= 20)
+if breakout_cond
+    last_breakout_bar := bar_index
+
+// ═══════════════════════════════════════════════
+// CONDICIONES DE SALIDA (Dinámicas)
+// ═══════════════════════════════════════════════
+rsi_sobrecompra = ta.crossover(rsi, 72)
+reversion_clara = ta.crossunder(close, ema50) and vela_roja and rsi < 62 and vol_creciente
+
+var int last_venta_bar = -999
+venta_cond_base = rsi_sobrecompra or reversion_clara
+venta_cond      = venta_cond_base and (bar_index - last_venta_bar >= 8)
+if venta_cond
+    last_venta_bar := bar_index
+
+var int last_extremo_bar = -999
+peligro_extremo_base = rompe_ema200 and vol_creciente
+peligro_extremo = peligro_extremo_base and (bar_index - last_extremo_bar >= 15)
+if peligro_extremo
+    last_extremo_bar := bar_index
+
+// ═══════════════════════════════════════════════
+// MOTOR DE LA ESTRATEGIA (Simulación Real)
+// ═══════════════════════════════════════════════
+
+var float stop_level = na
+var float take_profit_level = na
+
+// 1. GESTIONAR ENTRADAS (Solo si no hay una operación abierta - No promediar bajando)
+if strategy.position_size == 0
+    // [ON] COMPRA NORMAL (Restaurado porque es el motor principal)
+    if compra_cond
+        strategy.entry("LONG", strategy.long, qty=(strategy.equity * 0.45) / close, comment="COMPRA (45%)")
+        stop_level := close * 0.88        // -12% (Swing Diario)
+        take_profit_level := close * 1.35 // +35%
+        strategy.exit("TP/SL", "LONG", limit=take_profit_level, stop=stop_level)
+    
+    // [ON] DIP NORMAL (Restaurado)
+    else if dip_cond
+        strategy.entry("LONG", strategy.long, qty=(strategy.equity * 0.55) / close, comment="DIP (55%)")
+        stop_level := close * 0.88        // -12%
+        take_profit_level := close * 1.35 // +35%
+        strategy.exit("TP/SL", "LONG", limit=take_profit_level, stop=stop_level)
+    
+    // [ON] DIP BRUTAL
+    else if oportunidad_cond
+        strategy.entry("LONG", strategy.long, qty=(strategy.equity * 0.65) / close, comment="BRUTAL (65%)")
+        stop_level := close * 0.85        // -15%
+        take_profit_level := close * 1.40 // +40%
+        strategy.exit("TP/SL", "LONG", limit=take_profit_level, stop=stop_level)
+        
+    // [ON] POST-CAPITULACIÓN
+    else if post_capitulacion_cond
+        strategy.entry("LONG", strategy.long, qty=(strategy.equity * 0.45) / close, comment="POST_CAP (45%)")
+        stop_level := close * 0.85        // -15%
+        take_profit_level := close * 1.40 // +40%
+        strategy.exit("TP/SL", "LONG", limit=take_profit_level, stop=stop_level)
+        
+    // [ON] REBOTE BAJISTA (Restaurado)
+    else if rebote_bajista_cond
+        strategy.entry("LONG", strategy.long, qty=(strategy.equity * 0.25) / close, comment="REBOTE (25%)")
+        stop_level := close * 0.90        // -10%
+        take_profit_level := close * 1.25 // +25%
+        strategy.exit("TP/SL", "LONG", limit=take_profit_level, stop=stop_level)
+    
+    // [ON] BREAKOUT TENDENCIA (Restaurado)
+    else if breakout_cond
+        strategy.entry("LONG", strategy.long, qty=(strategy.equity * 0.25) / close, comment="BREAKOUT (25%)")
+        stop_level := close * 0.85        // -15%
+        take_profit_level := close * 1.50 // +50% (Ruptura Mayor)
+        strategy.exit("TP/SL", "LONG", limit=take_profit_level, stop=stop_level)
+
+// 2. GESTIONAR SALIDAS DINÁMICAS (Solo Emergencia Extrema)
+if strategy.position_size > 0
+    // Si aparece una señal estructural en contra (rompe EMA200), cerramos "a mano"
+    // NOTA: Eliminamos venta_cond y peligro_cond de aquí para evitar "manos de lechuga". Que corra al SL o al TP.
+    if peligro_extremo
+        strategy.close("LONG", comment="EMERGENCIA (Pel Extremo)")
+        stop_level := na
+        take_profit_level := na
+
+// 3. LIMPIEZA VISUAL (Ocultar líneas si la posición ya se cerró por hit de SL/TP)
+if strategy.position_size == 0
+    stop_level := na
+    take_profit_level := na
+
+// Pintar el SL y TP en el gráfico para validación
+plot(strategy.position_size > 0 ? stop_level : na, title="Stop Loss Simulado", color=color.new(#FF5252, 0), style=plot.style_linebr, linewidth=2)
+plot(strategy.position_size > 0 ? take_profit_level : na, title="Take Profit Simulado", color=color.new(#00E676, 0), style=plot.style_linebr, linewidth=2)
