@@ -1,5 +1,32 @@
 //@version=5
-indicator("🚀 Chivo Wallet Alerts V5.6 [4H]", shorttitle="Chivo V5.6", overlay=true, max_labels_count=500)
+indicator("🚀 Chivo Wallet Alerts V5.6 [4H]", shorttitle="Chivo V5.6", overlay=true, max_labels_count=500, max_boxes_count=50)
+
+// ═══════════════════════════════════════════════
+// INPUTS — Configuración desde el Panel de TradingView
+// ═══════════════════════════════════════════════
+
+// --- RSI ---
+i_rsi_overbought  = input.int(72,   "RSI Sobrecompra (VENTA)",      minval=65, maxval=85, step=1,   group="RSI")
+i_rsi_compra_min  = input.int(40,   "RSI Compra — Mínimo",          minval=30, maxval=50, step=1,   group="RSI")
+i_rsi_compra_max  = input.int(55,   "RSI Compra — Máximo",          minval=50, maxval=65, step=1,   group="RSI")
+
+// --- ADX / Volumen ---
+i_adx_minimo      = input.int(15,   "ADX Mínimo (Tendencia)",       minval=10, maxval=30, step=1,   group="ADX / Volumen")
+i_vol_minimo      = input.float(1.0, "Volumen Mínimo (x promedio)", minval=0.5, maxval=2.0, step=0.1, group="ADX / Volumen")
+
+// --- ATR ---
+i_atr_compra      = input.float(1.25, "ATR × EMA50 (Compra Normal)",  minval=0.5, maxval=3.0, step=0.25, group="ATR")
+i_atr_radar       = input.float(2.5,  "ATR × EMA50 (Radar Entrada)",  minval=1.0, maxval=5.0, step=0.25, group="ATR")
+
+// --- Cooldowns (barras de 4H) ---
+i_cd_peligro      = input.int(10,   "Cooldown PELIGRO (barras)",    minval=5,  maxval=20, step=1,   group="Cooldowns")
+i_cd_venta        = input.int(8,    "Cooldown VENTA (barras)",      minval=3,  maxval=15, step=1,   group="Cooldowns")
+i_cd_extremo      = input.int(15,   "Cooldown EXTREMO (barras)",    minval=5,  maxval=25, step=1,   group="Cooldowns")
+i_cd_breakout     = input.int(20,   "Cooldown BREAKOUT (barras)",   minval=10, maxval=40, step=1,   group="Cooldowns")
+i_cd_radar        = input.int(10,   "Cooldown RADAR (barras)",      minval=3,  maxval=20, step=1,   group="Cooldowns")
+
+// --- Divergencias ---
+i_div_barras      = input.int(10,   "Divergencia visible (barras)", minval=3,  maxval=20, step=1,   group="Divergencias")
 
 // ═══════════════════════════════════════════════
 // EMAS
@@ -24,7 +51,7 @@ daily_ema50  = request.security(syminfo.tickerid, "D", ta.ema(close, 50))
 daily_ema200 = request.security(syminfo.tickerid, "D", ta.ema(close, 200))
 daily_rsi    = request.security(syminfo.tickerid, "D", ta.rsi(close, 14))
 daily_bull   = daily_ema50 > daily_ema200
-daily_no_top = daily_rsi < 72
+daily_no_top = daily_rsi < i_rsi_overbought
 
 // --- Contexto 1 Hora ---
 h1_ema50     = request.security(syminfo.tickerid, "60", ta.ema(close, 50))
@@ -54,6 +81,17 @@ if not na(high_price)
 
 div_bull = low < last_low_price and rsi > last_low_rsi and not na(low_price)
 div_bear = high > last_high_price and rsi < last_high_rsi and not na(high_price)
+
+// MEJORA D: Persistencia de divergencias — visible N barras tras ser detectada
+// Antes parpadaba solo 1 barra (cuando se confirmaba el nuevo pivot)
+var int div_bull_bar = -999
+var int div_bear_bar = -999
+if div_bull
+    div_bull_bar := bar_index
+if div_bear
+    div_bear_bar := bar_index
+div_bull_activa = div_bull or (bar_index - div_bull_bar <= i_div_barras)
+div_bear_activa = div_bear or (bar_index - div_bear_bar <= i_div_barras)
 
 // ═══════════════════════════════════════════════
 // SQUEEZE MOMENTUM (BB vs KC)
@@ -88,13 +126,14 @@ if fvg_bull and barstate.isconfirmed
 // Dibujar cajas FVG (Bearish) — solo al cierre de vela confirmada
 if fvg_bear and barstate.isconfirmed
     box.new(bar_index-2, low[2], bar_index, high, border_color=color.new(#FF5252, 50), bgcolor=color.new(#FF5252, 85), text="🐻 FVG", text_size=size.tiny)
+
 vol_avg       = ta.sma(volume, 10)
 // REFACTOR: renombrado vol_creciente → vol_activo. El nombre anterior era engañoso:
 // no mide si el volumen CRECE, sino si está SOBRE el promedio mínimo requerido
-vol_activo = volume > vol_avg * 1.0
+vol_activo = volume > vol_avg * i_vol_minimo
 
 // Proximidad a EMA50 dinámica con ATR — se adapta a la volatilidad del momento
-precio_cerca_ema50 = math.abs(close - ema50) <= atr * 1.25  // FIX: Rango ampliado a 1.25 para tolerar ruido
+precio_cerca_ema50 = math.abs(close - ema50) <= atr * i_atr_compra
 
 vela_alcista = close > open
 vela_roja    = close < open
@@ -107,7 +146,7 @@ es_martillo   = rango > 0 and (math.min(open, close) - low) / rango >= 0.50 and 
 vela_con_cuerpo = cuerpo_solido or es_martillo // FIX: Incluye martillos (Pin Bars)
 
 // Tendencia con fuerza real — ADX rebajado a 15 para pullbacks donde el momentum descansa
-tendencia_fuerte = adx_val > 15                              // FIX: Básico para no filtrar pullbacks sanos
+tendencia_fuerte = adx_val > i_adx_minimo
 
 // ═══════════════════════════════════════════════
 // PELIGRO — definido ANTES de peligro_reciente
@@ -122,7 +161,7 @@ peligro_count = (rompe_ema50 ? 1 : 0) + (rsi_bajo ? 1 : 0) + (velas_rojas_fuerza
 
 var int last_peligro_bar = -999
 peligro_cond_base = peligro_count >= 3  // FIX: El doc dice 3+ puntos, tenías 2
-peligro_cond = peligro_cond_base and (bar_index - last_peligro_bar >= 10) // FIX: Cooldown de 10 barras
+peligro_cond = peligro_cond_base and (bar_index - last_peligro_bar >= i_cd_peligro)
 if peligro_cond
     last_peligro_bar := bar_index
 
@@ -132,7 +171,7 @@ peligro_reciente = nz(ta.barssince(peligro_cond[1]), 999) < 5 // FIX: Evita `na`
 // 1. 🟢 COMPRA NORMAL
 // ═══════════════════════════════════════════════
 tendencia_alcista = close > ema200 and ema50 > ema200 and daily_bull
-rsi_sano          = rsi >= 40 and rsi <= 55 and rsi > rsi[1]
+rsi_sano          = rsi >= i_rsi_compra_min and rsi <= i_rsi_compra_max and rsi > rsi[1]
 compra_cond       = tendencia_alcista and precio_cerca_ema50 and rsi_sano and vela_alcista and vela_con_cuerpo and vol_activo and tendencia_fuerte and daily_no_top
 
 plotshape(compra_cond, title="🟢 COMPRA", location=location.belowbar, color=color.new(#00E676, 0), style=shape.triangleup, size=size.large, text="🟢 COMPRA", textcolor=color.white)
@@ -196,12 +235,12 @@ if post_capitulacion_cond
 // ═══════════════════════════════════════════════
 // 4. 🔴 VENTA
 // ═══════════════════════════════════════════════
-rsi_sobrecompra = ta.crossover(rsi, 72)
+rsi_sobrecompra = ta.crossover(rsi, i_rsi_overbought)
 reversion_clara = ta.crossunder(close, ema50) and vela_roja and rsi < 62 and vol_activo  // MEJORA: requiere volumen
 
 var int last_venta_bar = -999
 venta_cond_base = rsi_sobrecompra or reversion_clara
-venta_cond      = venta_cond_base and (bar_index - last_venta_bar >= 8) // FIX: Cooldown de 8 barras
+venta_cond      = venta_cond_base and (bar_index - last_venta_bar >= i_cd_venta)
 if venta_cond
     last_venta_bar := bar_index
 
@@ -221,7 +260,7 @@ if peligro_cond
 // ═══════════════════════════════════════════════
 var int last_extremo_bar = -999
 peligro_extremo_base = rompe_ema200 and vol_activo
-peligro_extremo = peligro_extremo_base and (bar_index - last_extremo_bar >= 15) // FIX: Cooldown de 15 barras
+peligro_extremo = peligro_extremo_base and (bar_index - last_extremo_bar >= i_cd_extremo)
 if peligro_extremo
     last_extremo_bar := bar_index
 
@@ -249,14 +288,12 @@ if rebote_bajista_cond
 // Avisa horas antes para atenuar asincronía humana
 // ═══════════════════════════════════════════════
 // --- RADAR DE ENTRADA ---
-// FIX BUG: RSI techo subido de 48 a 54 para cubrir el rango completo de COMPRA NORMAL (40-55)
-// Con 48, el PRE-IN nunca avisaba cuando RSI estaba entre 49-55 y la COMPRA igual disparaba sola
-radar_compra = tendencia_alcista and (math.abs(close - ema50) <= atr * 2.5) and (rsi <= 54 and rsi > 38) and not peligro_reciente and not compra_cond
+radar_compra = tendencia_alcista and (math.abs(close - ema50) <= atr * i_atr_radar) and (rsi <= (i_rsi_compra_max - 1) and rsi > 38) and not peligro_reciente and not compra_cond
 radar_dip    = ((close - ta.highest(high, 15)) / ta.highest(high, 15) <= -0.025) and close < ema200 * 1.05 and (rsi <= 45) and not peligro_reciente and not dip_cond and not oportunidad_cond
 
 var int last_radar_in_bar = -999
 radar_in_raw = radar_compra or radar_dip
-radar_in_activo = radar_in_raw and (bar_index - last_radar_in_bar >= 10) // Anti-spam de 10 barras
+radar_in_activo = radar_in_raw and (bar_index - last_radar_in_bar >= i_cd_radar)
 if radar_in_activo
     last_radar_in_bar := bar_index
 
@@ -265,12 +302,12 @@ if radar_in_activo
     alert("📡 RADAR ENTRADA | Precio: $" + str.tostring(close, "#.##") + " | Entrando en Zona Caliente, ¡preparate para actuar!", alert.freq_once_per_bar_close)
 
 // --- RADAR DE SALIDA (Take Profit / Peligro) ---
-radar_tp      = (rsi >= 68 and rsi < 72) and close > ema50 // Acercándose a sobrecompra para tomar ganancias
+radar_tp      = (rsi >= (i_rsi_overbought - 4) and rsi < i_rsi_overbought) and close > ema50
 radar_peligro = (close > ema50 and (close - ema50) <= atr * 1.0) and vela_roja // Amenaza de cruzar la EMA50 para abajo
 
 var int last_radar_out_bar = -999
 radar_out_raw = radar_tp or radar_peligro
-radar_out_activo = radar_out_raw and (bar_index - last_radar_out_bar >= 8) // Anti-spam de 8 barras
+radar_out_activo = radar_out_raw and (bar_index - last_radar_out_bar >= i_cd_radar)
 if radar_out_activo
     last_radar_out_bar := bar_index
 
@@ -357,12 +394,15 @@ vela_ruptura_fuerte = vela_alcista and rango > 0 and (body / rango) >= 0.55
 // Necesita TODOS los filtros. Es la señal más exigente del sistema.
 var int last_breakout_bar = -999
 breakout_cond_base = above_ema200_3bars and vol_ruptura and rsi_giro and golden_cross_zone and daily_recovery and vela_ruptura_fuerte
-breakout_cond = breakout_cond_base and (bar_index - last_breakout_bar >= 20) // Cooldown de 20 barras (80 horas)
+breakout_cond = breakout_cond_base and (bar_index - last_breakout_bar >= i_cd_breakout)
 if breakout_cond
     last_breakout_bar := bar_index
 
 plotshape(breakout_cond, title="🚀 BREAKOUT TENDENCIA", location=location.belowbar, color=color.new(#7C4DFF, 0), style=shape.triangleup, size=size.large, text="🚀 BREAKOUT!", textcolor=color.white)
-alertcondition(breakout_cond, title="🚀 Alerta BREAKOUT TENDENCIA", message="POSIBLE CAMBIO DE TENDENCIA: BTC confirma 3 velas sobre EMA200 + volumen institucional + RSI girando + Golden Cross inminente. ENTRADA REDUCIDA 20-30% máximo. Verificá el contexto diario antes de actuar.")
+// FIX A: cambiado alertcondition() → if cond: alert() para que funcione igual que todas las otras señales
+// Con alertcondition() el usuario debía crear manualmente una alerta separada en TradingView — probablemente nunca llegó
+if breakout_cond
+    alert("🚀 BREAKOUT TENDENCIA | Precio: $" + str.tostring(close, "#.##") + " | SL: $" + str.tostring(close * 0.95, "#.##") + " (-5%) | 3 velas sobre EMA200 + Golden Cross zone + Vol institucional | Entrada REDUCIDA 20-30%", alert.freq_once_per_bar_close)
 
 // ═══════════════════════════════════════════════
 // 11. 📊 DASHBOARD — ESTADO EN TIEMPO REAL
@@ -397,18 +437,18 @@ if barstate.islast
     vol_ratio    = volume / vol_avg
     h1_color     = h1_bull ? color.new(#00E676, 0) : color.new(#FF5252, 0)
     dist_color   = math.abs(dist_ema200) > 5 ? color.new(color.orange, 0) : color.new(color.gray, 40)
-    div_label    = div_bull ? "🐮 BULL DIV" : div_bear ? "🐻 BEAR DIV" : "—"
-    div_color    = div_bull ? color.new(#00E676, 0) : div_bear ? color.new(#FF5252, 0) : color.new(#0D0D1A, 0)
+    div_label    = div_bull_activa ? "🐮 BULL DIV" : div_bear_activa ? "🐻 BEAR DIV" : "—"
+    div_color    = div_bull_activa ? color.new(#00E676, 0) : div_bear_activa ? color.new(#FF5252, 0) : color.new(#0D0D1A, 0)
 
     // Lógica de Autorecomendación
     rec_label = "👀 OBSERVANDO"
     rec_color = color.new(color.gray, 40)
     sqz_tag   = is_squeeze ? " [SQZ]" : ""
     
-    if tendencia_alcista and div_bull and vol_ratio > 1.2
+    if tendencia_alcista and div_bull_activa and vol_ratio > 1.2
         rec_label := "🚀 POSIBLE COMPRA" + sqz_tag
         rec_color := color.new(#00E676, 0)
-    else if not tendencia_alcista and div_bear and vol_ratio > 1.2
+    else if not tendencia_alcista and div_bear_activa and vol_ratio > 1.2
         rec_label := "💀 POSIBLE VENTA" + sqz_tag
         rec_color := color.new(#FF5252, 0)
     else if math.abs(dist_ema200) > 8
@@ -434,7 +474,7 @@ if barstate.islast
     // --- Fila 2: RSI ---
     table.cell(dash, 0, 2, "RSI 14",      text_color=color.new(color.gray,0), bgcolor=color.new(#0D0D1A,0), text_size=size.small)
     table.cell(dash, 1, 2, str.tostring(rsi, "#.#"), text_color=color.white, bgcolor=rsi_color, text_size=size.small)
-    table.cell(dash, 2, 2, "40 - 55",     text_color=color.gray, bgcolor=color.new(#0D0D1A,0), text_size=size.small)
+    table.cell(dash, 2, 2, str.tostring(i_rsi_compra_min) + " - " + str.tostring(i_rsi_compra_max), text_color=color.gray, bgcolor=color.new(#0D0D1A,0), text_size=size.small)
 
     // --- Fila 3: ADX ---
     adx_label = adx_val > 25 ? "FUERTE (" + str.tostring(adx_val,"#.#") + ")" : "DÉBIL (" + str.tostring(adx_val,"#.#") + ")"
