@@ -67,10 +67,10 @@ dev   = sqz_mult * ta.stdev(close, sqz_len)
 upperBB = basis + dev
 lowerBB = basis - dev
 
-ma = ta.sma(close, sqz_len)
+// REFACTOR: eliminada variable `ma` — era idéntica a `basis` (misma SMA 20 periodos)
 range_ema = ta.ema(ta.tr, sqz_len)
-upperKC = ma + range_ema * kc_mult
-lowerKC = ma - range_ema * kc_mult
+upperKC = basis + range_ema * kc_mult
+lowerKC = basis - range_ema * kc_mult
 
 is_squeeze = lowerBB > lowerKC and upperBB < upperKC
 
@@ -89,7 +89,9 @@ if fvg_bull and barstate.isconfirmed
 if fvg_bear and barstate.isconfirmed
     box.new(bar_index-2, low[2], bar_index, high, border_color=color.new(#FF5252, 50), bgcolor=color.new(#FF5252, 85), text="🐻 FVG", text_size=size.tiny)
 vol_avg       = ta.sma(volume, 10)
-vol_creciente = volume > vol_avg * 1.0          // FIX: Bajado a 1.0 para aceptar más rebotes en soporte
+// REFACTOR: renombrado vol_creciente → vol_activo. El nombre anterior era engañoso:
+// no mide si el volumen CRECE, sino si está SOBRE el promedio mínimo requerido
+vol_activo = volume > vol_avg * 1.0
 
 // Proximidad a EMA50 dinámica con ATR — se adapta a la volatilidad del momento
 precio_cerca_ema50 = math.abs(close - ema50) <= atr * 1.25  // FIX: Rango ampliado a 1.25 para tolerar ruido
@@ -113,7 +115,7 @@ tendencia_fuerte = adx_val > 15                              // FIX: Básico par
 rompe_ema50        = ta.crossunder(close, ema50) and close < ema50 * 0.99
 rompe_ema200       = ta.crossunder(close, ema200)            // NUEVO: romper EMA200 = peligro máximo
 rsi_bajo           = rsi < 40
-velas_rojas_fuerza = vela_roja and vela_roja[1] and vol_creciente
+velas_rojas_fuerza = vela_roja and vela_roja[1] and vol_activo
 
 // rompe_ema200 vale 2 puntos — es la señal más grave posible
 peligro_count = (rompe_ema50 ? 1 : 0) + (rsi_bajo ? 1 : 0) + (velas_rojas_fuerza ? 1 : 0) + (rompe_ema200 ? 2 : 0)
@@ -131,7 +133,7 @@ peligro_reciente = nz(ta.barssince(peligro_cond[1]), 999) < 5 // FIX: Evita `na`
 // ═══════════════════════════════════════════════
 tendencia_alcista = close > ema200 and ema50 > ema200 and daily_bull
 rsi_sano          = rsi >= 40 and rsi <= 55 and rsi > rsi[1]
-compra_cond       = tendencia_alcista and precio_cerca_ema50 and rsi_sano and vela_alcista and vela_con_cuerpo and vol_creciente and tendencia_fuerte and daily_no_top
+compra_cond       = tendencia_alcista and precio_cerca_ema50 and rsi_sano and vela_alcista and vela_con_cuerpo and vol_activo and tendencia_fuerte and daily_no_top
 
 plotshape(compra_cond, title="🟢 COMPRA", location=location.belowbar, color=color.new(#00E676, 0), style=shape.triangleup, size=size.large, text="🟢 COMPRA", textcolor=color.white)
 if compra_cond
@@ -143,7 +145,7 @@ if compra_cond
 // ═══════════════════════════════════════════════
 dip_fuerte      = (close - ta.highest(high, 15)) / ta.highest(high, 15) <= -0.04 and close < ema200 * 1.02 // FIX: Caída desde techo reciente
 rsi_bajo_rebote = rsi <= 42 and rsi > rsi[1] and rsi[1] > rsi[2]  // FIX: 2 barras *consecutivas* subiendo
-dip_cond        = dip_fuerte and rsi_bajo_rebote and vol_creciente and vela_alcista and vela_con_cuerpo and not peligro_reciente  // MEJORA: añadido filtro peligro + vela_con_cuerpo
+dip_cond        = dip_fuerte and rsi_bajo_rebote and vol_activo and vela_alcista and vela_con_cuerpo and not peligro_reciente  // MEJORA: añadido filtro peligro + vela_con_cuerpo
 
 plotshape(dip_cond, title="🟢 DIP EN CORRECCIÓN", location=location.belowbar, color=color.new(#00C853, 0), style=shape.triangleup, size=size.large, text="🟢 DIP!", textcolor=color.white)
 if dip_cond
@@ -152,7 +154,7 @@ if dip_cond
 // ═══════════════════════════════════════════════
 // 3. 🔥 DIP BRUTAL (normal — sin peligro reciente)
 // ═══════════════════════════════════════════════
-oportunidad_cond = dip_fuerte and rsi <= 38 and daily_bull and vol_creciente and vela_con_cuerpo and vela_alcista and not peligro_reciente and close > ema200 * 0.98 and daily_no_top // FIX: Faltaba vela_alcista
+oportunidad_cond = dip_fuerte and rsi <= 38 and daily_bull and vol_activo and vela_con_cuerpo and vela_alcista and not peligro_reciente and close > ema200 * 0.98 and daily_no_top // FIX: Faltaba vela_alcista
 
 plotshape(oportunidad_cond, title="🔥 DIP BRUTAL", location=location.belowbar, color=color.new(#FFEB3B, 0), style=shape.diamond, size=size.large, text="🔥 DIP BRUTAL!", textcolor=color.black)
 if oportunidad_cond
@@ -195,7 +197,7 @@ if post_capitulacion_cond
 // 4. 🔴 VENTA
 // ═══════════════════════════════════════════════
 rsi_sobrecompra = ta.crossover(rsi, 72)
-reversion_clara = ta.crossunder(close, ema50) and vela_roja and rsi < 62 and vol_creciente  // MEJORA: requiere volumen
+reversion_clara = ta.crossunder(close, ema50) and vela_roja and rsi < 62 and vol_activo  // MEJORA: requiere volumen
 
 var int last_venta_bar = -999
 venta_cond_base = rsi_sobrecompra or reversion_clara
@@ -218,7 +220,7 @@ if peligro_cond
 // 6. 💀 PELIGRO EXTREMO (NUEVO en V5.1)
 // ═══════════════════════════════════════════════
 var int last_extremo_bar = -999
-peligro_extremo_base = rompe_ema200 and vol_creciente
+peligro_extremo_base = rompe_ema200 and vol_activo
 peligro_extremo = peligro_extremo_base and (bar_index - last_extremo_bar >= 15) // FIX: Cooldown de 15 barras
 if peligro_extremo
     last_extremo_bar := bar_index
@@ -232,9 +234,11 @@ if peligro_extremo
 // Opera rebotes cortos incluso en tendencia bajista
 // Entrada pequeña 20-30% máximo – salida rápida
 // ═══════════════════════════════════════════════
-caida_fuerte_bajista = (close - close[5]) / close[5] <= -0.06
+// REFACTOR: medición consistente con todos los otros dips — usa highest(high,15) en lugar de close[5]
+// close[5] podía pasar por alto caídas bruscas que empezaron hace 2-3 barras
+caida_fuerte_bajista = (close - ta.highest(high, 15)) / ta.highest(high, 15) <= -0.06
 rsi_rebote_bajista   = rsi <= 35 and rsi > rsi[1] and rsi[1] > rsi[2] // FIX: Escalera alcista
-rebote_bajista_cond  = caida_fuerte_bajista and rsi_rebote_bajista and vol_creciente and vela_alcista and vela_con_cuerpo and not peligro_reciente and not daily_bull
+rebote_bajista_cond  = caida_fuerte_bajista and rsi_rebote_bajista and vol_activo and vela_alcista and vela_con_cuerpo and not peligro_reciente and not daily_bull
 
 plotshape(rebote_bajista_cond, title="⚡ REBOTE BAJISTA", location=location.belowbar, color=color.new(#00BCD4, 0), style=shape.triangleup, size=size.normal, text="⚡ REBOTE", textcolor=color.white)
 if rebote_bajista_cond
