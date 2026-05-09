@@ -1,5 +1,5 @@
 //@version=5
-indicator("🚀 Chivo Wallet Alerts V5.6 [4H]", shorttitle="Chivo V5.6", overlay=true, max_labels_count=500, max_boxes_count=50)
+indicator("🚀 Chivo Wallet Alerts V5.6 [4H]", shorttitle="Chivo V5.6", overlay=true, max_labels_count=500, max_boxes_count=50, max_lines_count=200)
 
 // ═══════════════════════════════════════════════
 // INPUTS — Configuración desde el Panel de TradingView
@@ -9,10 +9,23 @@ indicator("🚀 Chivo Wallet Alerts V5.6 [4H]", shorttitle="Chivo V5.6", overlay
 i_rsi_overbought  = input.int(72,   "RSI Sobrecompra (VENTA)",      minval=65, maxval=85, step=1,   group="RSI")
 i_rsi_compra_min  = input.int(40,   "RSI Compra — Mínimo",          minval=30, maxval=50, step=1,   group="RSI")
 i_rsi_compra_max  = input.int(55,   "RSI Compra — Máximo",          minval=50, maxval=65, step=1,   group="RSI")
+i_rsi_impulso_min = input.int(54,   "RSI Impulso — Mínimo",         minval=45, maxval=70, step=1,   group="RSI")
+i_rsi_impulso_max = input.int(68,   "RSI Impulso — Máximo",         minval=55, maxval=80, step=1,   group="RSI")
+i_reentrada_flexible = input.bool(true, "Modo Re-entrada Flexible (más señales)", group="RSI")
+i_bloquear_bear_reentry = input.bool(true, "Bloquear Re-entradas en Bear Fuerte", group="RSI")
+i_lateral_activo        = input.bool(true, "Activar señales en lateralización", group="RSI")
+i_rsi_lateral_min       = input.int(42, "RSI Lateral — Mínimo", minval=30, maxval=55, step=1, group="RSI")
+i_rsi_lateral_max       = input.int(59, "RSI Lateral — Máximo", minval=45, maxval=70, step=1, group="RSI")
+i_tp_reentrada_max_pct  = input.float(7.0, "TP Re-entrada Máximo (%)", minval=3.0, maxval=15.0, step=0.5, group="RSI")
+i_tp_lateral_max_pct    = input.float(6.0, "TP Lateral Máximo (%)", minval=2.0, maxval=12.0, step=0.5, group="RSI")
+i_reentrada_rsi_2velas  = input.bool(true, "Re-entrada: exigir RSI subiendo 2 velas", group="RSI")
+i_reentrada_adx_min     = input.int(17, "ADX mínimo Re-entrada", minval=10, maxval=35, step=1, group="RSI")
 
 // --- ADX / Volumen ---
 i_adx_minimo      = input.int(15,   "ADX Mínimo (Tendencia)",       minval=10, maxval=30, step=1,   group="ADX / Volumen")
 i_vol_minimo      = input.float(1.0, "Volumen Mínimo (x promedio)", minval=0.5, maxval=2.0, step=0.1, group="ADX / Volumen")
+i_vol_reentrada   = input.float(0.65, "Volumen Re-entrada (x promedio)", minval=0.3, maxval=1.5, step=0.05, group="ADX / Volumen")
+i_vol_impulso     = input.float(1.2, "Volumen Impulso (x promedio)", minval=0.8, maxval=2.5, step=0.1, group="ADX / Volumen")
 
 // --- ATR ---
 i_atr_compra      = input.float(1.25, "ATR × EMA50 (Compra Normal)",  minval=0.5, maxval=3.0, step=0.25, group="ATR")
@@ -21,12 +34,51 @@ i_atr_radar       = input.float(2.5,  "ATR × EMA50 (Radar Entrada)",  minval=1.
 // --- Cooldowns (barras de 4H) ---
 i_cd_peligro      = input.int(10,   "Cooldown PELIGRO (barras)",    minval=5,  maxval=20, step=1,   group="Cooldowns")
 i_cd_venta        = input.int(8,    "Cooldown VENTA (barras)",      minval=3,  maxval=15, step=1,   group="Cooldowns")
+i_cd_reentrada    = input.int(4,    "Cooldown RE-ENTRADA (barras)", minval=2,  maxval=20, step=1,   group="Cooldowns")
+i_cd_impulso      = input.int(10,   "Cooldown IMPULSO (barras)",    minval=3,  maxval=20, step=1,   group="Cooldowns")
 i_cd_extremo      = input.int(15,   "Cooldown EXTREMO (barras)",    minval=5,  maxval=25, step=1,   group="Cooldowns")
 i_cd_breakout     = input.int(20,   "Cooldown BREAKOUT (barras)",   minval=10, maxval=40, step=1,   group="Cooldowns")
 i_cd_radar        = input.int(10,   "Cooldown RADAR (barras)",      minval=3,  maxval=20, step=1,   group="Cooldowns")
+i_filtro_zona_reentrada = input.bool(true, "Evitar Re-entrada repetida en misma zona", group="Cooldowns")
+i_atr_zona_reentrada    = input.float(1.0, "Distancia mínima RE-ENTRADA (ATR)", minval=0.25, maxval=3.0, step=0.25, group="Cooldowns")
+i_atr_zona_radar        = input.float(0.75, "Distancia mínima RADAR (ATR)", minval=0.25, maxval=3.0, step=0.25, group="Cooldowns")
+i_cd_lateral            = input.int(6, "Cooldown LATERAL (barras)", minval=2, maxval=20, step=1, group="Cooldowns")
+i_cd_global_entry       = input.int(3, "Cooldown GLOBAL entradas (barras)", minval=0, maxval=20, step=1, group="Cooldowns")
+
+// --- Prioridad / ramas ---
+i_prioridad_unica       = input.bool(true, "Prioridad única de señal por vela", group="Prioridad")
+i_radar_compra_on       = input.bool(true, "Radar Compra ON", group="Prioridad")
+i_radar_reentrada_on    = input.bool(true, "Radar Re-entrada ON", group="Prioridad")
+i_radar_impulso_on      = input.bool(true, "Radar Impulso ON", group="Prioridad")
+i_radar_dip_on          = input.bool(true, "Radar Dip ON", group="Prioridad")
+i_radar_lateral_on      = input.bool(true, "Radar Lateral ON", group="Prioridad")
+
+// --- Lateralización ---
+i_lateral_len           = input.int(80, "Rango histórico (barras)", minval=30, maxval=300, step=5, group="Lateralización")
+i_lateral_entry_len     = input.int(28, "Rango operativo piso (barras)", minval=10, maxval=120, step=2, group="Lateralización")
+i_lateral_width_max     = input.float(0.18, "Ancho máximo rango (%)", minval=0.08, maxval=0.40, step=0.01, group="Lateralización")
+i_lateral_adx_max       = input.int(22, "ADX máximo para lateral", minval=10, maxval=35, step=1, group="Lateralización")
+i_lateral_floor_atr     = input.float(0.70, "Zona piso rango (ATR)", minval=0.25, maxval=2.0, step=0.05, group="Lateralización")
+i_lateral_bear_estable  = input.bool(true, "Permitir lateral en bear estabilizado", group="Lateralización")
+
+// --- Visual ---
+i_objetivo_visual       = input.bool(true, "Mostrar nivel objetivo (🎯)", group="Visual")
+i_objetivo_life_bars    = input.int(18, "Duración nivel objetivo (barras)", minval=4, maxval=80, step=1, group="Visual")
+
+// --- Riesgo (híbrido ATR + tope %) ---
+i_sl_atr_mult_4         = input.float(1.8, "SL 4%: ATR x", minval=0.5, maxval=4.0, step=0.1, group="Riesgo")
+i_sl_atr_mult_3         = input.float(1.4, "SL 3%: ATR x", minval=0.5, maxval=4.0, step=0.1, group="Riesgo")
+i_sl_4_max_pct          = input.float(4.0, "SL 4%: Tope pérdida (%)", minval=1.0, maxval=8.0, step=0.25, group="Riesgo")
+i_sl_3_max_pct          = input.float(3.0, "SL 3%: Tope pérdida (%)", minval=1.0, maxval=8.0, step=0.25, group="Riesgo")
+i_tp_atr_mult           = input.float(2.8, "TP: ATR x (cap dinámico)", minval=1.0, maxval=8.0, step=0.1, group="Riesgo")
 
 // --- Divergencias ---
 i_div_barras      = input.int(10,   "Divergencia visible (barras)", minval=3,  maxval=20, step=1,   group="Divergencias")
+
+// --- DCA ---
+i_dca_radar = input.float(5000,  "DCA: Monto PRE-IN ($)",      minval=100, maxval=100000, step=500,  group="DCA")
+i_dca_conf  = input.float(5000,  "DCA: Monto CONFIRMADA ($)",  minval=100, maxval=100000, step=500,  group="DCA")
+i_dca_max   = input.float(25000, "DCA: Capital Máximo ($)",    minval=1000, maxval=200000, step=1000, group="DCA")
 
 // ═══════════════════════════════════════════════
 // EMAS
@@ -131,12 +183,14 @@ vol_avg       = ta.sma(volume, 10)
 // REFACTOR: renombrado vol_creciente → vol_activo. El nombre anterior era engañoso:
 // no mide si el volumen CRECE, sino si está SOBRE el promedio mínimo requerido
 vol_activo = volume > vol_avg * i_vol_minimo
+vol_reentrada_ok = volume > vol_avg * i_vol_reentrada
 
 // Proximidad a EMA50 dinámica con ATR — se adapta a la volatilidad del momento
 precio_cerca_ema50 = math.abs(close - ema50) <= atr * i_atr_compra
 
 vela_alcista = close > open
 vela_roja    = close < open
+vol_reentrada_flex = i_reentrada_flexible ? (vol_reentrada_ok or volume > volume[1] * 0.70 or volume >= ta.lowest(volume, 6) * 1.05) : vol_reentrada_ok
 
 // Calidad de vela — Aceptamos cuerpo sólido (>40%) o Martillos alcistas (mecha inferior larga)
 body          = math.abs(close - open)
@@ -147,6 +201,13 @@ vela_con_cuerpo = cuerpo_solido or es_martillo // FIX: Incluye martillos (Pin Ba
 
 // Tendencia con fuerza real — ADX rebajado a 15 para pullbacks donde el momentum descansa
 tendencia_fuerte = adx_val > i_adx_minimo
+
+// Contexto de rango histórico para detectar lateralización
+range_hi = ta.highest(high, i_lateral_len)
+range_lo = ta.lowest(low, i_lateral_len)
+range_width_pct = range_lo > 0 ? (range_hi - range_lo) / range_lo : 0.0
+lateral_base = i_lateral_activo and range_width_pct <= i_lateral_width_max and adx_val <= i_lateral_adx_max
+range_lo_entry = ta.lowest(low, i_lateral_entry_len)
 
 // ═══════════════════════════════════════════════
 // PELIGRO — definido ANTES de peligro_reciente
@@ -171,12 +232,94 @@ peligro_reciente = nz(ta.barssince(peligro_cond[1]), 999) < 5 // FIX: Evita `na`
 // 1. 🟢 COMPRA NORMAL
 // ═══════════════════════════════════════════════
 tendencia_alcista = close > ema200 and ema50 > ema200 and daily_bull
+tendencia_recovery = close > ema200 * 0.995 and ema50 > ema200 * 0.985 and daily_ema50 > daily_ema200 * 0.96
+contexto_reentrada_h1 = close > ema200 * 0.99 and ema50 > ema200 * 0.97 and h1_bull
+contexto_reentrada = tendencia_alcista or tendencia_recovery or contexto_reentrada_h1
+bear_fuerte = close < ema200 and ema50 < ema200 and daily_ema50 < daily_ema200
+salida_debil_bear = close > ema50 or ta.crossover(close, ema50) or rsi > 50
+filtro_anti_trampa = not i_bloquear_bear_reentry or (not bear_fuerte) or salida_debil_bear
+ema50_estable = ema50 >= ema50[1] * 0.998
+piso_defendido = low >= range_lo_entry * 0.995 and ta.lowest(low, 8) >= range_lo_entry * 0.992
+rsi_salida_bear = rsi >= i_rsi_lateral_min and rsi > rsi[1]
+bear_lateral_habilitado = i_lateral_bear_estable and bear_fuerte and lateral_base and ema50_estable and piso_defendido and rsi_salida_bear
+lateral_activo = lateral_base and (not bear_fuerte or bear_lateral_habilitado)
 rsi_sano          = rsi >= i_rsi_compra_min and rsi <= i_rsi_compra_max and rsi > rsi[1]
-compra_cond       = tendencia_alcista and precio_cerca_ema50 and rsi_sano and vela_alcista and vela_con_cuerpo and vol_activo and tendencia_fuerte and daily_no_top
+compra_cond       = tendencia_alcista and precio_cerca_ema50 and rsi_sano and vela_alcista and vela_con_cuerpo and vol_reentrada_flex and tendencia_fuerte and daily_no_top and filtro_anti_trampa
 
 plotshape(compra_cond, title="🟢 COMPRA", location=location.belowbar, color=color.new(#00E676, 0), style=shape.triangleup, size=size.large, text="🟢 COMPRA", textcolor=color.white)
 if compra_cond
     alert("🟢 COMPRA NORMAL | Precio: $" + str.tostring(close, "#.##") + " | SL: $" + str.tostring(close * 0.96, "#.##") + " (-4%) | TP: $" + str.tostring(close * 1.10, "#.##") + " (+10%) | RSI: " + str.tostring(rsi, "#.#") + " | Entrada 40-50%", alert.freq_once_per_bar_close)
+
+// ═══════════════════════════════════════════════
+// 1A. 🔁 RE-ENTRADA BULL (NUEVO V5.7)
+// Detecta pullback saludable a EMA50 + rebote sin exigir volumen institucional
+// ═══════════════════════════════════════════════
+pullback_sano = ((close - ta.highest(high, 12)) / ta.highest(high, 12)) <= -0.010 and close >= ema50 * 0.98 and close <= ema50 * 1.05
+rsi_reentrada = rsi >= 43 and rsi <= 63 and (i_reentrada_rsi_2velas ? (rsi > rsi[1] and rsi[1] > rsi[2]) : (rsi > rsi[1] or ta.crossover(rsi, 50)))
+rebote_reentrada = close > open and (vela_con_cuerpo or close > close[1] or ta.crossover(close, ema50))
+
+var int last_reentrada_bar = -999
+var float last_reentrada_price = na
+reentrada_precio_ok = not i_filtro_zona_reentrada or na(last_reentrada_price) or math.abs(close - last_reentrada_price) >= atr * i_atr_zona_reentrada
+reentrada_cond_base = contexto_reentrada and pullback_sano and rsi_reentrada and rebote_reentrada and vol_reentrada_flex and adx_val >= i_reentrada_adx_min and not peligro_reciente and daily_no_top and filtro_anti_trampa and reentrada_precio_ok and not compra_cond
+reentrada_cond = reentrada_cond_base and (bar_index - last_reentrada_bar >= i_cd_reentrada)
+if reentrada_cond
+    last_reentrada_bar := bar_index
+    last_reentrada_price := close
+
+// TP adaptativo: evita objetivos irreales en re-entradas bajo resistencia cercana
+resistencia_reentrada = nz(ta.highest(high, 24)[1], close * 1.10)
+tp_reentrada_cap = close * (1.0 + i_tp_reentrada_max_pct / 100.0)
+tp_reentrada = math.max(close * 1.03, math.min(math.min(close * 1.09, tp_reentrada_cap), resistencia_reentrada * 0.995))
+tp_reentrada_pct = (tp_reentrada / close - 1.0) * 100.0
+
+plotshape(reentrada_cond, title="🔁 RE-ENTRADA BULL", location=location.belowbar, color=color.new(#26A69A, 0), style=shape.triangleup, size=size.normal, text="🔁 RE-ENTRADA", textcolor=color.white)
+if reentrada_cond
+    alert("🔁 RE-ENTRADA BULL | Precio: $" + str.tostring(close, "#.##") + " | SL: $" + str.tostring(close * 0.96, "#.##") + " (-4%) | TP: $" + str.tostring(tp_reentrada, "#.##") + " (+" + str.tostring(tp_reentrada_pct, "#.#") + "%) | RSI: " + str.tostring(rsi, "#.#") + " | Entrada 25-35%", alert.freq_once_per_bar_close)
+
+// ═══════════════════════════════════════════════
+// 1C. 🟦 ENTRADA LATERAL (NUEVO V5.7)
+// Opera rebote desde piso de rango cuando no hay tendencia clara
+// ═══════════════════════════════════════════════
+lateral_piso = close <= range_lo_entry + atr * i_lateral_floor_atr
+rsi_lateral_ok = rsi >= i_rsi_lateral_min and rsi <= i_rsi_lateral_max and rsi > rsi[1]
+rebote_lateral = close > open or close > close[1] or ta.crossover(close, ema50)
+
+var int last_lateral_bar = -999
+var float last_lateral_price = na
+lateral_precio_ok = not i_filtro_zona_reentrada or na(last_lateral_price) or math.abs(close - last_lateral_price) >= atr * i_atr_zona_reentrada
+lateral_cond_base = lateral_activo and lateral_piso and rsi_lateral_ok and rebote_lateral and vol_reentrada_flex and not peligro_reciente and lateral_precio_ok and not compra_cond and not reentrada_cond
+lateral_cond = lateral_cond_base and (bar_index - last_lateral_bar >= i_cd_lateral)
+if lateral_cond
+    last_lateral_bar := bar_index
+    last_lateral_price := close
+
+// TP adaptativo en lateralización: limita objetivo al techo reciente del rango
+tp_lateral_cap = close * (1.0 + i_tp_lateral_max_pct / 100.0)
+tp_lateral = math.max(close * 1.02, math.min(math.min(close * 1.07, tp_lateral_cap), range_hi * 0.995))
+tp_lateral_pct = (tp_lateral / close - 1.0) * 100.0
+
+plotshape(lateral_cond, title="🟦 ENTRADA LATERAL", location=location.belowbar, color=color.new(#29B6F6, 0), style=shape.diamond, size=size.normal, text="🟦 LATERAL", textcolor=color.white)
+if lateral_cond
+    alert("🟦 ENTRADA LATERAL | Precio: $" + str.tostring(close, "#.##") + " | SL: $" + str.tostring(close * 0.97, "#.##") + " (-3%) | TP: $" + str.tostring(tp_lateral, "#.##") + " (+" + str.tostring(tp_lateral_pct, "#.#") + "%) | RSI: " + str.tostring(rsi, "#.#") + " | Entrada 20-30%", alert.freq_once_per_bar_close)
+
+// ═══════════════════════════════════════════════
+// 1B. 🚀 COMPRA IMPULSO (NUEVO V5.7)
+// Captura continuación alcista sin esperar pullback profundo a EMA50
+// ═══════════════════════════════════════════════
+rompe_max_10 = close > ta.highest(high, 10)[1]
+rsi_impulso  = rsi >= i_rsi_impulso_min and rsi <= i_rsi_impulso_max and rsi > rsi[1] and rsi[1] > rsi[2]
+vol_impulso  = volume > vol_avg * i_vol_impulso
+
+var int last_impulso_bar = -999
+impulso_cond_base = tendencia_alcista and close > ema50 and rompe_max_10 and rsi_impulso and vol_impulso and vela_alcista and cuerpo_solido and not peligro_reciente and daily_no_top
+impulso_cond = impulso_cond_base and (bar_index - last_impulso_bar >= i_cd_impulso)
+if impulso_cond
+    last_impulso_bar := bar_index
+
+plotshape(impulso_cond, title="🚀 COMPRA IMPULSO", location=location.belowbar, color=color.new(#7C4DFF, 0), style=shape.triangleup, size=size.normal, text="🚀 IMPULSO", textcolor=color.white)
+if impulso_cond
+    alert("🚀 COMPRA IMPULSO | Precio: $" + str.tostring(close, "#.##") + " | SL: $" + str.tostring(close * 0.96, "#.##") + " (-4%) | TP: $" + str.tostring(close * 1.10, "#.##") + " (+10%) | RSI: " + str.tostring(rsi, "#.#") + " | Entrada 25-35%", alert.freq_once_per_bar_close)
 
 // (Stop loss visual dinámico movido al final del script)
 // ═══════════════════════════════════════════════
@@ -184,7 +327,7 @@ if compra_cond
 // ═══════════════════════════════════════════════
 dip_fuerte      = (close - ta.highest(high, 15)) / ta.highest(high, 15) <= -0.04 and close < ema200 * 1.02 // FIX: Caída desde techo reciente
 rsi_bajo_rebote = rsi <= 42 and rsi > rsi[1] and rsi[1] > rsi[2]  // FIX: 2 barras *consecutivas* subiendo
-dip_cond        = dip_fuerte and rsi_bajo_rebote and vol_activo and vela_alcista and vela_con_cuerpo and not peligro_reciente  // MEJORA: añadido filtro peligro + vela_con_cuerpo
+dip_cond        = dip_fuerte and rsi_bajo_rebote and vol_activo and vela_alcista and vela_con_cuerpo and not peligro_reciente and filtro_anti_trampa  // Evita cuchillo cayendo en bear fuerte
 
 plotshape(dip_cond, title="🟢 DIP EN CORRECCIÓN", location=location.belowbar, color=color.new(#00C853, 0), style=shape.triangleup, size=size.large, text="🟢 DIP!", textcolor=color.white)
 if dip_cond
@@ -236,7 +379,7 @@ if post_capitulacion_cond
 // 4. 🔴 VENTA
 // ═══════════════════════════════════════════════
 rsi_sobrecompra = ta.crossover(rsi, i_rsi_overbought)
-reversion_clara = ta.crossunder(close, ema50) and vela_roja and rsi < 62 and vol_activo  // MEJORA: requiere volumen
+reversion_clara = ta.crossunder(close, ema50) and close < ema50 * 0.995 and vela_roja and rsi < 60 and vol_activo and (not daily_bull or rsi < 55)  // Menos ruido en bull trend
 
 var int last_venta_bar = -999
 venta_cond_base = rsi_sobrecompra or reversion_clara
@@ -284,32 +427,116 @@ if rebote_bajista_cond
     alert("⚡ REBOTE BAJISTA | Precio: $" + str.tostring(close, "#.##") + " | SL: $" + str.tostring(close * 0.97, "#.##") + " (-3%) | TP: $" + str.tostring(close * 1.06, "#.##") + " (+6%) | RSI: " + str.tostring(rsi, "#.#") + " | Entrada 20-30%", alert.freq_once_per_bar_close)
 
 // ═══════════════════════════════════════════════
+// DCA TRACKER — estado base (declarado aquí para usarlo en alertas RADAR)
+// ═══════════════════════════════════════════════
+var float dca_capital   = 0.0
+var float dca_weighted  = 0.0
+var int   dca_entries   = 0
+var float dca_avg_price = na
+var bool  dca_active    = false
+
+// ═══════════════════════════════════════════════
 // 8. 📡 RADARES PREVENTIVOS PRE-ALERTAS (V5.6)
 // Avisa horas antes para atenuar asincronía humana
 // ═══════════════════════════════════════════════
 // --- RADAR DE ENTRADA ---
-radar_compra = tendencia_alcista and (math.abs(close - ema50) <= atr * i_atr_radar) and (rsi <= (i_rsi_compra_max - 1) and rsi > 38) and not peligro_reciente and not compra_cond
-radar_dip    = ((close - ta.highest(high, 15)) / ta.highest(high, 15) <= -0.025) and close < ema200 * 1.05 and (rsi <= 45) and not peligro_reciente and not dip_cond and not oportunidad_cond
+// FIX: preout_reciente bloquea PRE-IN durante 4 velas (16h) tras un PRE-OUT
+// Evita entrar en correcciones normales post-overbought que NO son reentradas reales
+var int last_radar_out_bar = -999  // declarado aquí para que preout_reciente pueda usarlo
+preout_reciente = (bar_index - last_radar_out_bar) <= 4
+
+preout_fuerza_alcista = close > ema50 and rsi >= i_rsi_compra_min and rsi > rsi[1]
+bloqueo_preout = preout_reciente and not preout_fuerza_alcista
+
+radar_compra = i_radar_compra_on and tendencia_alcista and (math.abs(close - ema50) <= atr * i_atr_radar) and (rsi <= (i_rsi_compra_max - 1) and rsi > 38) and vol_reentrada_flex and not peligro_reciente and filtro_anti_trampa and not bloqueo_preout and not compra_cond and not reentrada_cond
+radar_reentrada = i_radar_reentrada_on and contexto_reentrada and close >= ema50 * 0.975 and close <= ema50 * 1.07 and rsi >= 42 and rsi <= 64 and (rsi > rsi[1] or ta.crossover(rsi, 50)) and rebote_reentrada and vol_reentrada_flex and adx_val >= i_reentrada_adx_min and not peligro_reciente and filtro_anti_trampa and not bloqueo_preout and not compra_cond and not reentrada_cond
+radar_impulso = i_radar_impulso_on and tendencia_alcista and close > ema50 and (close - ema50) <= atr * i_atr_radar and rsi >= (i_rsi_compra_max - 1) and rsi <= i_rsi_impulso_max and rsi > rsi[1] and vol_reentrada_flex and not peligro_reciente and filtro_anti_trampa and not bloqueo_preout and not compra_cond and not impulso_cond
+radar_dip    = i_radar_dip_on and ((close - ta.highest(high, 15)) / ta.highest(high, 15) <= -0.025) and close < ema200 * 1.05 and (rsi <= 45) and not peligro_reciente and filtro_anti_trampa and not bloqueo_preout and not dip_cond and not oportunidad_cond
+radar_lateral = i_radar_lateral_on and lateral_activo and close <= range_lo_entry + atr * (i_lateral_floor_atr + 0.35) and rsi >= (i_rsi_lateral_min - 2) and rsi <= i_rsi_lateral_max and (rsi > rsi[1] or ta.crossover(rsi, 50)) and vol_reentrada_flex and not peligro_reciente and not lateral_cond
+
+radar_compra_sel = radar_compra
+radar_reentrada_sel = radar_reentrada
+radar_impulso_sel = radar_impulso
+radar_dip_sel = radar_dip
+radar_lateral_sel = radar_lateral
+if i_prioridad_unica
+    radar_reentrada_sel := radar_reentrada
+    radar_compra_sel := not radar_reentrada_sel and radar_compra
+    radar_lateral_sel := not radar_reentrada_sel and not radar_compra_sel and radar_lateral
+    radar_dip_sel := not radar_reentrada_sel and not radar_compra_sel and not radar_lateral_sel and radar_dip
+    radar_impulso_sel := not radar_reentrada_sel and not radar_compra_sel and not radar_lateral_sel and not radar_dip_sel and radar_impulso
 
 var int last_radar_in_bar = -999
-radar_in_raw = radar_compra or radar_dip
-radar_in_activo = radar_in_raw and (bar_index - last_radar_in_bar >= i_cd_radar)
+var float last_radar_in_price = na
+radar_precio_ok = not i_filtro_zona_reentrada or na(last_radar_in_price) or math.abs(close - last_radar_in_price) >= atr * i_atr_zona_radar
+radar_in_raw = radar_compra_sel or radar_reentrada_sel or radar_impulso_sel or radar_dip_sel or radar_lateral_sel
+radar_in_activo = radar_in_raw and radar_precio_ok and (bar_index - last_radar_in_bar >= i_cd_radar)
+
+radar_objetivo = radar_lateral_sel ? (range_lo_entry + atr * i_lateral_floor_atr) :
+     radar_dip_sel ? ema200 :
+     radar_impulso_sel ? ta.highest(high, 10)[1] :
+     radar_reentrada_sel ? ema50 :
+     radar_compra_sel ? ema50 : na
+
+var float nivel_objetivo = na
+var int objetivo_bar = -999
+var line objetivo_line = na
+var label objetivo_label = na
+var label objetivo_hint_label = na
+var string objetivo_tipo = ""
 if radar_in_activo
     last_radar_in_bar := bar_index
+    last_radar_in_price := close
+    if not na(radar_objetivo)
+        nivel_objetivo := radar_objetivo
+        objetivo_bar := bar_index
+        objetivo_tipo := "ESPERA"
+        if i_objetivo_visual
+            if not na(objetivo_line)
+                line.delete(objetivo_line)
+            if not na(objetivo_label)
+                label.delete(objetivo_label)
+            objetivo_line := line.new(bar_index, nivel_objetivo, bar_index + i_objetivo_life_bars, nivel_objetivo, extend=extend.right, color=color.new(#42A5F5, 0), width=2, style=line.style_dashed)
+            objetivo_label := label.new(bar_index + i_objetivo_life_bars, nivel_objetivo, "🎯 OBJ $" + str.tostring(nivel_objetivo, "#.##"), style=label.style_label_left, color=color.new(#42A5F5, 10), textcolor=color.white, size=size.small)
+
+objetivo_expirado = objetivo_bar > -1 and (bar_index - objetivo_bar > i_objetivo_life_bars)
+if objetivo_expirado
+    nivel_objetivo := na
+    objetivo_tipo := ""
+    if not na(objetivo_line)
+        line.delete(objetivo_line)
+        objetivo_line := na
+    if not na(objetivo_label)
+        label.delete(objetivo_label)
+        objetivo_label := na
 
 plotshape(radar_in_activo, title="📡 RADAR ENTRADA", location=location.belowbar, color=color.new(#FF9800, 0), style=shape.flag, size=size.small, text="📡\nPRE-IN", textcolor=color.black)
 if radar_in_activo
-    alert("📡 RADAR ENTRADA | Precio: $" + str.tostring(close, "#.##") + " | Entrando en Zona Caliente, ¡preparate para actuar!", alert.freq_once_per_bar_close)
+    dca_disponible = math.max(i_dca_max - dca_capital, 0.0)
+    dca_sugerido   = math.min(i_dca_radar, dca_disponible)
+    dca_plan_txt   = dca_sugerido > 0 ? " | Sugerido ahora: $" + str.tostring(dca_sugerido, "#") + " | Disponible: $" + str.tostring(dca_disponible, "#") : " | Capital DCA completo ($" + str.tostring(i_dca_max, "#") + ")"
+    objetivo_txt   = not na(radar_objetivo) ? " | 🎯 Esperar zona: $" + str.tostring(radar_objetivo, "#.##") : ""
+    alert("📡 RADAR ENTRADA | Precio: $" + str.tostring(close, "#.##") + objetivo_txt + dca_plan_txt + " | Entrada escalonada por oportunidad", alert.freq_once_per_bar_close)
 
 // --- RADAR DE SALIDA (Take Profit / Peligro) ---
-radar_tp      = (rsi >= (i_rsi_overbought - 4) and rsi < i_rsi_overbought) and close > ema50
-radar_peligro = (close > ema50 and (close - ema50) <= atr * 1.0) and vela_roja // Amenaza de cruzar la EMA50 para abajo
+// FIX: radar_tp solo dispara cuando RSI empieza a DOBLAR para abajo en zona caliente
+// Antes disparaba con RSI subiendo en 68-72, generando múltiples PRE-OUT prematuros
+radar_tp      = (rsi >= (i_rsi_overbought - 4) and rsi < i_rsi_overbought) and close > ema50 and rsi < rsi[1]
+// FIX: radar_peligro requiere 2 velas rojas consecutivas — una sola no es señal confiable
+radar_peligro = (close > ema50 and (close - ema50) <= atr * 1.0) and vela_roja and vela_roja[1]
 
-var int last_radar_out_bar = -999
 radar_out_raw = radar_tp or radar_peligro
 radar_out_activo = radar_out_raw and (bar_index - last_radar_out_bar >= i_cd_radar)
 if radar_out_activo
     last_radar_out_bar := bar_index
+    nivel_objetivo := na
+    objetivo_tipo := ""
+    if not na(objetivo_line)
+        line.delete(objetivo_line)
+        objetivo_line := na
+    if not na(objetivo_label)
+        label.delete(objetivo_label)
+        objetivo_label := na
 
 plotshape(radar_out_activo, title="⚠️ RADAR SALIDA", location=location.abovebar, color=color.new(#FFC107, 0), style=shape.flag, size=size.small, text="⚠️\nPRE-OUT", textcolor=color.black)
 if radar_out_activo
@@ -324,10 +551,84 @@ if radar_out_activo
 var float sl_level    = na
 var float entry_price = na
 var bool  in_trade    = false
+var int   last_confirmed_entry_bar = -999
 
-is_entry_4pct = compra_cond or dip_cond or oportunidad_cond
-is_entry_3pct = post_capitulacion_cond or rebote_bajista_cond
+// Prioridad de entradas confirmadas (reduce choques de señales en la misma vela)
+entry_compra_raw = compra_cond
+entry_reentrada_raw = reentrada_cond
+entry_impulso_raw = impulso_cond
+entry_dip_raw = dip_cond
+entry_oportunidad_raw = oportunidad_cond
+entry_postcap_raw = post_capitulacion_cond
+entry_rebote_bear_raw = rebote_bajista_cond
+entry_lateral_raw = lateral_cond
+
+entry_compra_sel = entry_compra_raw
+entry_reentrada_sel = entry_reentrada_raw
+entry_impulso_sel = entry_impulso_raw
+entry_dip_sel = entry_dip_raw
+entry_oportunidad_sel = entry_oportunidad_raw
+entry_postcap_sel = entry_postcap_raw
+entry_rebote_bear_sel = entry_rebote_bear_raw
+entry_lateral_sel = entry_lateral_raw
+
+if i_prioridad_unica
+    entry_postcap_sel := entry_postcap_raw
+    entry_oportunidad_sel := not entry_postcap_sel and entry_oportunidad_raw
+    entry_compra_sel := not entry_postcap_sel and not entry_oportunidad_sel and entry_compra_raw
+    entry_reentrada_sel := not entry_postcap_sel and not entry_oportunidad_sel and not entry_compra_sel and entry_reentrada_raw
+    entry_lateral_sel := not entry_postcap_sel and not entry_oportunidad_sel and not entry_compra_sel and not entry_reentrada_sel and entry_lateral_raw
+    entry_impulso_sel := not entry_postcap_sel and not entry_oportunidad_sel and not entry_compra_sel and not entry_reentrada_sel and not entry_lateral_sel and entry_impulso_raw
+    entry_dip_sel := not entry_postcap_sel and not entry_oportunidad_sel and not entry_compra_sel and not entry_reentrada_sel and not entry_lateral_sel and not entry_impulso_sel and entry_dip_raw
+    entry_rebote_bear_sel := not entry_postcap_sel and not entry_oportunidad_sel and not entry_compra_sel and not entry_reentrada_sel and not entry_lateral_sel and not entry_impulso_sel and not entry_dip_sel and entry_rebote_bear_raw
+
+can_take_new_entry = (bar_index - last_confirmed_entry_bar) >= i_cd_global_entry
+if not can_take_new_entry
+    entry_compra_sel := false
+    entry_reentrada_sel := false
+    entry_impulso_sel := false
+    entry_dip_sel := false
+    entry_oportunidad_sel := false
+    entry_postcap_sel := false
+    entry_rebote_bear_sel := false
+    entry_lateral_sel := false
+
+is_entry_4pct = entry_compra_sel or entry_reentrada_sel or entry_impulso_sel or entry_dip_sel or entry_oportunidad_sel
+is_entry_3pct = entry_postcap_sel or entry_rebote_bear_sel or entry_lateral_sel
 is_any_entry  = is_entry_4pct or is_entry_3pct
+
+tp_cap_atr = close + atr * i_tp_atr_mult
+tp_compra = math.min(close * 1.10, tp_cap_atr)
+tp_impulso = math.min(close * 1.10, tp_cap_atr)
+tp_dip = math.min(close * 1.10, tp_cap_atr)
+tp_oportunidad = math.min(close * 1.12, tp_cap_atr)
+tp_postcap = math.min(close * 1.10, tp_cap_atr)
+tp_rebote_bear = math.min(close * 1.06, tp_cap_atr)
+tp_reentrada_final = math.min(tp_reentrada, tp_cap_atr)
+tp_lateral_final = math.min(tp_lateral, tp_cap_atr)
+
+entry_objetivo = entry_compra_sel ? tp_compra :
+     entry_reentrada_sel ? tp_reentrada_final :
+     entry_impulso_sel ? tp_impulso :
+     entry_dip_sel ? tp_dip :
+     entry_oportunidad_sel ? tp_oportunidad :
+     entry_postcap_sel ? tp_postcap :
+     entry_rebote_bear_sel ? tp_rebote_bear :
+     entry_lateral_sel ? tp_lateral_final : na
+if is_any_entry and not na(entry_objetivo)
+    nivel_objetivo := entry_objetivo
+    objetivo_bar := bar_index
+    objetivo_tipo := "TP"
+    if not na(objetivo_hint_label)
+        label.delete(objetivo_hint_label)
+    objetivo_hint_label := label.new(bar_index, close, "🎯 TP $" + str.tostring(entry_objetivo, "#.##"), style=label.style_label_up, color=color.new(#00C853, 70), textcolor=color.white, size=size.small)
+    if i_objetivo_visual
+        if not na(objetivo_line)
+            line.delete(objetivo_line)
+        if not na(objetivo_label)
+            label.delete(objetivo_label)
+        objetivo_line := line.new(bar_index, nivel_objetivo, bar_index + i_objetivo_life_bars, nivel_objetivo, extend=extend.right, color=color.new(#00C853, 0), width=2, style=line.style_dashed)
+        objetivo_label := label.new(bar_index + i_objetivo_life_bars, nivel_objetivo, "🎯 TP $" + str.tostring(nivel_objetivo, "#.##"), style=label.style_label_left, color=color.new(#00C853, 10), textcolor=color.white, size=size.small)
 
 // Detectamos si el precio perforó el Stop Loss en base al 'low' de la vela
 sl_hit = false
@@ -340,13 +641,27 @@ normal_exit = in_trade and (venta_cond or peligro_cond or peligro_extremo)
 if sl_hit or normal_exit
     in_trade := false
     sl_level := na
+    nivel_objetivo := na
+    objetivo_tipo := ""
+    if not na(objetivo_line)
+        line.delete(objetivo_line)
+        objetivo_line := na
+    if not na(objetivo_label)
+        label.delete(objetivo_label)
+        objetivo_label := na
+    if not na(objetivo_hint_label)
+        label.delete(objetivo_hint_label)
+        objetivo_hint_label := na
 
 // Actualizamos estado (nueva entrada)
 // FIX BUG: agregado `and not sl_hit` para evitar re-entrada automática en la misma barra que se tocó el SL
 if is_any_entry and not in_trade and not sl_hit
     in_trade    := true
-    sl_level    := is_entry_4pct ? close * 0.96 : close * 0.97
+    sl_4pct_dynamic = math.max(close * (1.0 - i_sl_4_max_pct / 100.0), close - atr * i_sl_atr_mult_4)
+    sl_3pct_dynamic = math.max(close * (1.0 - i_sl_3_max_pct / 100.0), close - atr * i_sl_atr_mult_3)
+    sl_level    := is_entry_4pct ? sl_4pct_dynamic : sl_3pct_dynamic
     entry_price := close
+    last_confirmed_entry_bar := bar_index
 
 // Reset entry_price al cerrar
 if sl_hit or normal_exit
@@ -354,6 +669,7 @@ if sl_hit or normal_exit
 
 // Ploteando la línea persistente del Stop Loss mientras la operación está viva
 plot(in_trade ? sl_level : na, title="🛡️ Stop Loss Activo", color=color.new(#FF5252, 10), style=plot.style_linebr, linewidth=3)
+plot(i_objetivo_visual ? nivel_objetivo : na, title="🎯 Nivel Objetivo Espera", color=color.new(#42A5F5, 0), style=plot.style_linebr, linewidth=2)
 
 // Ploteando la alerta en el momento exacto que la vela toca el Stop Loss
 plotshape(sl_hit, title="❌ CORTE PÉRDIDA", location=location.belowbar, color=color.new(#D50000, 0), style=shape.xcross, size=size.normal, text="❌ SALIR YA\n(STOP HIT)", textcolor=color.white)
@@ -404,6 +720,62 @@ plotshape(breakout_cond, title="🚀 BREAKOUT TENDENCIA", location=location.belo
 if breakout_cond
     alert("🚀 BREAKOUT TENDENCIA | Precio: $" + str.tostring(close, "#.##") + " | SL: $" + str.tostring(close * 0.95, "#.##") + " (-5%) | 3 velas sobre EMA200 + Golden Cross zone + Vol institucional | Entrada REDUCIDA 20-30%", alert.freq_once_per_bar_close)
 
+// Integración de breakout al mismo motor de estado/riesgo
+breakout_can_enter = breakout_cond and ((bar_index - last_confirmed_entry_bar) >= i_cd_global_entry) and (not in_trade) and (not sl_hit)
+if breakout_can_enter
+    in_trade := true
+    sl_level := math.max(close * 0.95, close - atr * (i_sl_atr_mult_4 + 0.4))
+    entry_price := close
+    last_confirmed_entry_bar := bar_index
+
+    breakout_tp = math.min(close * 1.10, close + atr * i_tp_atr_mult)
+    nivel_objetivo := breakout_tp
+    objetivo_bar := bar_index
+    objetivo_tipo := "TP"
+    if not na(objetivo_hint_label)
+        label.delete(objetivo_hint_label)
+    objetivo_hint_label := label.new(bar_index, close, "🎯 TP $" + str.tostring(breakout_tp, "#.##"), style=label.style_label_up, color=color.new(#00C853, 70), textcolor=color.white, size=size.small)
+    if i_objetivo_visual
+        if not na(objetivo_line)
+            line.delete(objetivo_line)
+        if not na(objetivo_label)
+            label.delete(objetivo_label)
+        objetivo_line := line.new(bar_index, nivel_objetivo, bar_index + i_objetivo_life_bars, nivel_objetivo, extend=extend.right, color=color.new(#00C853, 0), width=2, style=line.style_dashed)
+        objetivo_label := label.new(bar_index + i_objetivo_life_bars, nivel_objetivo, "🎯 TP $" + str.tostring(nivel_objetivo, "#.##"), style=label.style_label_left, color=color.new(#00C853, 10), textcolor=color.white, size=size.small)
+
+// ═══════════════════════════════════════════════
+// DCA TRACKER
+// PRE-IN → $i_dca_radar | CONFIRMADA → $i_dca_conf
+// PRE-OUT resetea el tracker completo
+// ═══════════════════════════════════════════════
+
+// Salida: PRE-OUT cierra posición DCA
+if radar_out_activo and dca_active
+    dca_capital   := 0.0
+    dca_weighted  := 0.0
+    dca_entries   := 0
+    dca_avg_price := na
+    dca_active    := false
+
+// Entrada PRE-IN — monto reducido
+if radar_in_activo and dca_capital < i_dca_max
+    dca_sz        = math.min(i_dca_radar, i_dca_max - dca_capital)
+    dca_capital  += dca_sz
+    dca_weighted += close * dca_sz
+    dca_entries  += 1
+    dca_avg_price := dca_weighted / dca_capital
+    dca_active   := true
+
+// Entrada CONFIRMADA — monto mayor, alta convicción
+dca_confirmed = is_any_entry or breakout_cond
+if dca_confirmed and dca_capital < i_dca_max
+    dca_sz        = math.min(i_dca_conf, i_dca_max - dca_capital)
+    dca_capital  += dca_sz
+    dca_weighted += close * dca_sz
+    dca_entries  += 1
+    dca_avg_price := dca_weighted / dca_capital
+    dca_active   := true
+
 // ═══════════════════════════════════════════════
 // 11. 📊 DASHBOARD — ESTADO EN TIEMPO REAL
 // Panel visual en TradingView con toda la info
@@ -417,6 +789,12 @@ var table dash = table.new(position.middle_left, 3, 10,
      frame_width=1)
 
 var table context_dash = table.new(position.bottom_right, 2, 8,
+     border_color=color.new(color.gray, 50),
+     border_width=1,
+     frame_color=color.new(color.gray, 30),
+     frame_width=1)
+
+var table dca_dash = table.new(position.top_right, 2, 7,
      border_color=color.new(color.gray, 50),
      border_width=1,
      frame_color=color.new(color.gray, 30),
@@ -547,4 +925,39 @@ if barstate.islast
     table.cell(context_dash, 0, 7, "FVG RECIENTE", text_color=color.gray, bgcolor=color.new(#0D0D1A, 0), text_size=size.small)
     table.cell(context_dash, 1, 7, fvg_status, text_color=color.white, bgcolor=fvg_bg, text_size=size.small)
 
-
+    // --- TABLA DCA ---
+    dca_pnl_pct   = dca_active and not na(dca_avg_price) and dca_avg_price > 0 ? (close - dca_avg_price) / dca_avg_price * 100 : 0.0
+    dca_pnl_color = dca_pnl_pct >= 0 ? color.new(#00E676, 0) : color.new(#FF5252, 0)
+    dca_avail     = math.max(i_dca_max - dca_capital, 0.0)
+
+    table.cell(dca_dash, 0, 0, "💰 DCA TRACKER",  text_color=color.white, bgcolor=color.new(#1A237E, 0), text_size=size.small)
+    table.cell(dca_dash, 1, 0, dca_active ? "🔵 ACTIVO" : "⚪ LIBRE", text_color=color.white, bgcolor=dca_active ? color.new(#1565C0, 0) : color.new(#37474F, 0), text_size=size.small)
+
+    table.cell(dca_dash, 0, 1, "ENTRADAS",        text_color=color.gray, bgcolor=color.new(#0D0D1A, 0), text_size=size.small)
+    table.cell(dca_dash, 1, 1, str.tostring(dca_entries), text_color=color.white, bgcolor=color.new(#0D0D1A, 0), text_size=size.small)
+
+    table.cell(dca_dash, 0, 2, "CAPITAL",          text_color=color.gray, bgcolor=color.new(#0D0D1A, 0), text_size=size.small)
+    table.cell(dca_dash, 1, 2, "$" + str.tostring(dca_capital, "#.##") + " / $" + str.tostring(i_dca_max, "#"), text_color=color.white, bgcolor=color.new(#0D0D1A, 0), text_size=size.small)
+
+    table.cell(dca_dash, 0, 3, "DISPONIBLE",       text_color=color.gray, bgcolor=color.new(#0D0D1A, 0), text_size=size.small)
+    table.cell(dca_dash, 1, 3, "$" + str.tostring(dca_avail, "#.##"), text_color=dca_avail > 0 ? color.new(#00E676, 0) : color.new(#FF5252, 0), bgcolor=color.new(#0D0D1A, 0), text_size=size.small)
+
+    table.cell(dca_dash, 0, 4, "PRECIO PROM",      text_color=color.gray, bgcolor=color.new(#0D0D1A, 0), text_size=size.small)
+    table.cell(dca_dash, 1, 4, dca_active ? "$" + str.tostring(dca_avg_price, "#.##") : "—", text_color=color.white, bgcolor=color.new(#0D0D1A, 0), text_size=size.small)
+
+    table.cell(dca_dash, 0, 5, "P&L TOTAL",        text_color=color.gray, bgcolor=color.new(#0D0D1A, 0), text_size=size.small)
+    table.cell(dca_dash, 1, 5, dca_active ? str.tostring(dca_pnl_pct, "#.##") + "%" : "—", text_color=color.white, bgcolor=dca_active ? dca_pnl_color : color.new(#0D0D1A, 0), text_size=size.small)
+
+    prox_obj_txt = not na(nivel_objetivo) ? "🎯 " + objetivo_tipo + " $" + str.tostring(nivel_objetivo, "#.##") : "🎯 —"
+    table.cell(dca_dash, 0, 6, "PRÓX ENTRADA",     text_color=color.gray, bgcolor=color.new(#0D0D1A, 0), text_size=size.small)
+    table.cell(dca_dash, 1, 6, prox_obj_txt + " | 📡 $" + str.tostring(i_dca_radar, "#"), text_color=not na(nivel_objetivo) ? color.new(#42A5F5, 0) : color.new(color.gray, 30), bgcolor=color.new(#0D0D1A, 0), text_size=size.small)
+
+
+// ═══════════════════════════════════════════════
+// CHECKLIST VALIDACIÓN 4H (manual)
+// 1) Probar en bloques fijos de histórico (sin mover inputs a mitad de bloque)
+// 2) Medir: expectancy (R), profit factor, drawdown máx, racha perdedora
+// 3) Separar resultados por tipo de entrada: compra, reentrada, lateral, impulso, breakout
+// 4) A/B de un solo parámetro por iteración (evitar sobreajuste)
+// 5) Aceptar cambio solo si mejora precisión sin colapsar oportunidades válidas
+// ═══════════════════════════════════════════════
