@@ -35,3 +35,13 @@ for f in TradingViewer/*.pine; do
   grep -q '^//@version=5' "$f" && grep -qE '^(indicator|strategy)\(' "$f" && echo "✓ $f" || echo "✗ $f INVALID"
 done
 ```
+
+### TradingView Testing (manual, requires login)
+
+To test Pine Script code on TradingView:
+
+1. Go to https://www.tradingview.com/chart/
+2. Open Pine Editor via: **Indicators menu → My scripts → Create script**
+3. Paste `.pine` file contents and click **Add to chart**
+4. TradingView **requires authentication** to compile and apply custom indicators — anonymous access only shows the editor but won't execute code on the chart.
+5. For backtesting (`strategy()` scripts), use the **Strategy Tester** tab after adding to chart.
